@@ -1,1 +1,2 @@
 panda3d
+watchdog>=3.0.0
