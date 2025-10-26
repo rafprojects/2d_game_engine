@@ -483,10 +483,14 @@ def main():
         'new-component': create_new_component,
         'new-system': create_new_system,
         'new-example': create_new_example,
-        'new-test': lambda: print("New test template creation not implemented yet."),
-        'templates': lambda: print("Available templates:\n- Platformer\n- Shooter\n- RPG\n- Puzzle\n- Minimal")
+        'new-test': lambda: (print("New test template creation not implemented yet."), False)[1],
+        'templates': lambda: (print("Available templates:\n- Platformer\n- Shooter\n- RPG\n- Puzzle\n- Minimal"), True)[1]
     }
     
+    if args.command not in commands:
+        print_error(f"Unknown command: {args.command}")
+        parser.print_help()
+        return 1
     success = commands[args.command]()
     return 0 if success else 1
 
