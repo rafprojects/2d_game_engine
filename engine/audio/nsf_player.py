@@ -266,9 +266,8 @@ class NSFSystem(System):
             
     def get_nsf_visualization_data(self, entity_id: int) -> Optional[List[float]]:
         """Get channel levels for visualization."""
-        nsf_component = self.worl
-        d.get_component(entity_id, NSFPlayerComponent)
-        if nsf_component:06221758.
+        nsf_component = self.world.get_component(entity_id, NSFPlayerComponent)
+        if nsf_component:
             return nsf_component.get_channel_levels()
         return None
 
