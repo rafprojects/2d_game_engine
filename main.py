@@ -43,16 +43,7 @@ try:
 except ImportError:
     print("⚠️  Tweening system not available - running without visual effects")
     TWEENING_AVAILABLE = False
-
-# Optional import for tweening effects
-try:
-    from engine.animation.movement_tweening import MovementTweenComponent
-    from engine.animation.tweening import global_tween_manager
-    TWEENING_AVAILABLE = True
-except ImportError:
-    TWEENING_AVAILABLE = False
     MovementTweenComponent = None
-
 class Game(ShowBase):
     def __init__(self):
         ShowBase.__init__(self)
