@@ -112,13 +112,6 @@ class Game(ShowBase):
             else:
                 print("ℹ️  Running without tweening effects")
             
-            # Add optional tweening effects for visual polish
-            if TWEENING_AVAILABLE:
-                tween_comp = MovementTweenComponent()
-                tween_comp.set_base_transform(Vec2(0, 0), Vec2(1, 1), 0.0)
-                tween_comp.set_preset("smooth")  # Use smooth preset for polished feel
-                self.world.add_component(player_entity.id, tween_comp)
-                print("✅ Movement tweening effects enabled")
 
             # Setup Input for the player entity
             player_input_bindings = {
