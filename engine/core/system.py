@@ -1,10 +1,7 @@
-import uuid
+# import uuid
 from .events import EventManager, EntityCreatedEvent, EntityDestroyedEvent, ComponentAddedEvent, ComponentRemovedEvent
+from .entity import Entity
 
-class Entity:
-    def __init__(self, name=None):
-        self.id = uuid.uuid4()
-        self.name = name
 
 class System:
     """
@@ -60,7 +57,7 @@ class World:
         if entity_id in self.components and component_type in self.components[entity_id]:
             component_instance = self.components[entity_id][component_type]
             # Publish event BEFORE actual removal
-            self.event_manager.publish(ComponentRemovedEvent(entity_id, component_type))
+            self.event_manager.publish(ComponentRemovedEvent(entity_id, component_type, component_instance))
 
             if hasattr(component_instance, 'panda_node') and component_instance.panda_node:
                 component_instance.panda_node.removeNode()

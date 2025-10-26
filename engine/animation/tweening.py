@@ -4,36 +4,12 @@ Tweening and Easing System for smooth animations and movement effects.
 This module provides various easing functions and a tween manager for creating
 smooth animations and visual effects.
 """
-
 import math
-from enum import Enum
 from typing import Callable, Any, Dict, List, Optional
+
 from panda3d.core import Vec2, Vec3
 
-class EasingType(Enum):
-    """Predefined easing function types."""
-    LINEAR = "linear"
-    EASE_IN_QUAD = "ease_in_quad"
-    EASE_OUT_QUAD = "ease_out_quad"
-    EASE_IN_OUT_QUAD = "ease_in_out_quad"
-    EASE_IN_CUBIC = "ease_in_cubic"
-    EASE_OUT_CUBIC = "ease_out_cubic"
-    EASE_IN_OUT_CUBIC = "ease_in_out_cubic"
-    EASE_IN_QUART = "ease_in_quart"
-    EASE_OUT_QUART = "ease_out_quart"
-    EASE_IN_OUT_QUART = "ease_in_out_quart"
-    EASE_IN_SINE = "ease_in_sine"
-    EASE_OUT_SINE = "ease_out_sine"
-    EASE_IN_OUT_SINE = "ease_in_out_sine"
-    EASE_IN_EXPO = "ease_in_expo"
-    EASE_OUT_EXPO = "ease_out_expo"
-    EASE_IN_OUT_EXPO = "ease_in_out_expo"
-    EASE_IN_BOUNCE = "ease_in_bounce"
-    EASE_OUT_BOUNCE = "ease_out_bounce"
-    EASE_IN_OUT_BOUNCE = "ease_in_out_bounce"
-    EASE_IN_ELASTIC = "ease_in_elastic"
-    EASE_OUT_ELASTIC = "ease_out_elastic"
-    EASE_IN_OUT_ELASTIC = "ease_in_out_elastic"
+from engine.animation.typesg.animation import EasingType
 
 class EasingFunctions:
     """Collection of easing functions for smooth animations."""

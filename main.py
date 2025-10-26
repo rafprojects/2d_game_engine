@@ -5,7 +5,7 @@ from panda3d.core import Vec2, Filename, ClockObject # Import ClockObject for gl
 import os # Import os for path manipulation
 
 from engine.core.system import World
-from engine.core.components.transform_component import TransformComponent
+from engine.graphics.components.transform_component import TransformComponent
 from engine.core.components.movement_component import MovementComponent
 from engine.core.systems.movement_system import MovementSystem
 from engine.graphics.components.sprite_component import SpriteComponent

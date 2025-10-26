@@ -1,4 +1,5 @@
 from typing import Dict, List, Tuple
+
 from panda3d.core import Texture, PNMImage, LVecBase4f
 
 class SpriteFrame:

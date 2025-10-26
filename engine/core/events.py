@@ -48,6 +48,7 @@ class ComponentAddedEvent(Event):
         self.component = component_instance
 
 class ComponentRemovedEvent(Event):
-    def __init__(self, entity_id, component_type):
+    def __init__(self, entity_id, component_type, component_instance):
         self.entity_id = entity_id
         self.component_type = component_type
+        self.component = component_instance

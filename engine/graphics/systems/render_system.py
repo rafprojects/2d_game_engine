@@ -1,11 +1,12 @@
+import uuid
+
+from panda3d.core import CardMaker, NodePath, TransparencyAttrib, Texture, TextureStage
+
 from engine.core.system import System
-from engine.core.components.transform_component import TransformComponent
+from engine.graphics.components.transform_component import TransformComponent
 from engine.graphics.components.sprite_component import SpriteComponent
 from engine.core.events import ComponentRemovedEvent, EntityDestroyedEvent
 from engine.graphics.sprite_sheet import SpriteFrame
-# Import Panda3D components the same way as in minimal.py
-from panda3d.core import CardMaker, NodePath, TransparencyAttrib, Texture, TextureStage
-import uuid
 
 class RenderSystem(System):
     def __init__(self, world, base): 
@@ -39,18 +40,37 @@ class RenderSystem(System):
             potential_node.removeNode()
 
     def _load_texture(self, image_path: str) -> Texture | None:
+        """Load and cache a texture with proper error handling"""
         if image_path not in self.textures:
-            tex = self.loader.loadTexture(image_path)
-            if tex:
-                tex.setMagfilter(Texture.FTNearest)
-                tex.setMinfilter(Texture.FTNearest)
-                self.textures[image_path] = tex
-            else:
-                print(f"Warning: Could not load texture: {image_path}")
+            try:
+                tex = self.loader.loadTexture(image_path)
+                if tex:
+                    tex.setMagfilter(Texture.FTNearest)
+                    tex.setMinfilter(Texture.FTNearest)
+                    self.textures[image_path] = tex
+                    print(f"Successfully loaded texture: {image_path}")
+                else:
+                    print(f"Error: Could not load texture: {image_path}")
+                    return None
+            except Exception as e:
+                print(f"Error loading texture {image_path}: {e}")
                 return None
         return self.textures[image_path]
 
     def _create_sprite_node(self, entity_id: uuid.UUID, image_path: str) -> NodePath | None:
+        """Create a sprite node with error checking and debug info"""
+        if not image_path:
+            # Create a colored rectangle when no image path is provided
+            cm = CardMaker(f'{entity_id}_sprite_card')
+            cm.setFrame(-0.5, 0.5, -0.5, 0.5)  # Centered at origin
+            node = NodePath(cm.generate())
+            node.setTransparency(TransparencyAttrib.MAlpha)
+            node.setColor(1, 1, 1, 1)  # Default color, will be overridden by sprite.color
+            node.reparentTo(self.aspect2d)
+            
+            print(f"Created colored rectangle sprite node for entity {entity_id}")
+            return node
+            
         texture = self._load_texture(image_path)
         if texture:
             cm = CardMaker(f'{entity_id}_sprite_card')
@@ -60,8 +80,14 @@ class RenderSystem(System):
             node.setTransparency(TransparencyAttrib.MAlpha)
             node.setColor(1, 1, 1, 1)  # Ensure full opacity and color by default
             node.reparentTo(self.aspect2d)
+            
+            # Debug information
+            print(f"Created sprite node for entity {entity_id}: texture {texture.getXSize()}x{texture.getYSize()}")
+            
             return node
-        return None
+        else:
+            print(f"Error: Failed to create sprite node for entity {entity_id} - texture loading failed")
+            return None
         
     def _apply_animation_frame(self, node: NodePath, frame: 'SpriteFrame', flip_x: bool = False, flip_y: bool = False):
         """Apply a sprite animation frame's UV coordinates to the given node."""
@@ -92,26 +118,22 @@ class RenderSystem(System):
 
     def _update_node_transform(self, node: NodePath, transform: TransformComponent, sprite: SpriteComponent):
         # Position the sprite in aspect2d coordinates
-        node.setPos(transform.position.x, 0, transform.position.y)
+        node.setPos(transform.x, 0, transform.y)
         node.setR(transform.rotation)
         
-        # Apply scaling based on texture size with more appropriate scale values
-        # This approach avoids extreme scaling values that can cause rendering issues
-        if node.getTexture():
-            # Use a more moderate scale factor similar to what worked in the minimal demo
-            # We'll use a base scale of 0.1 per pixel which gives good results for typical 64px sprites
-            base_scale = 0.1
-            # Adjust scale based on texture size
-            texture = node.getTexture()
-            tex_width = texture.getXSize()
-            tex_height = texture.getYSize()
-            # Scale proportionally to texture size
-            scale_x = transform.scale.x * base_scale * (tex_width / 64.0)
-            scale_z = transform.scale.y * base_scale * (tex_height / 64.0)
-            node.setScale(scale_x, 1, scale_z)
-        else:
-            # Fallback scaling if no texture is available
-            node.setScale(transform.scale.x * 0.5, 1, transform.scale.y * 0.5)
+        # CRITICAL FIX: Use scaling approach that matches minimal.py
+        # Transform.scale is now a direct multiplier where 1.0 = reasonable default size
+        # This gives sprites that are actually visible, similar to minimal.py's setScale(0.5)
+        base_scale = 0.5  # This matches what works in minimal.py
+        
+        # Apply transform scale as a direct multiplier
+        final_scale_x = base_scale * transform.scale_x
+        final_scale_z = base_scale * transform.scale_y
+        
+        node.setScale(final_scale_x, 1, final_scale_z)
+        
+        # Debug logging for troubleshooting (commented out to reduce noise)
+        # print(f"Sprite scale debug - Transform: {transform.scale}, Final: {final_scale_x}x{final_scale_z}")
             
         # Ensure proper color and transparency
         node.setColor(sprite.color)
@@ -126,7 +148,7 @@ class RenderSystem(System):
             transform = self.world.get_component(entity.id, TransformComponent)
             sprite = self.world.get_component(entity.id, SpriteComponent)
             if transform and sprite: # Ensure components are still there
-                sorted_entities_data.append({'entity': entity, 'transform': transform, 'sprite': sprite, 'layer': sprite.layer, 'y_pos': transform.position.y})
+                sorted_entities_data.append({'entity': entity, 'transform': transform, 'sprite': sprite, 'layer': sprite.layer, 'y_pos': transform.y})
 
         sorted_entities_data.sort(key=lambda e: (e['layer'], -e['y_pos']))
         return sorted_entities_data
@@ -168,16 +190,27 @@ class RenderSystem(System):
         sorted_entities_data = self._get_sorted_renderable_entities()
         current_sprite_entity_ids = set()
 
+        print(f"🎨 RenderSystem: Processing {len(sorted_entities_data)} entities with sprites")
+
         for item_data in sorted_entities_data:
             entity = item_data['entity']
             transform = item_data['transform']
             sprite = item_data['sprite']
             
             current_sprite_entity_ids.add(entity.id)
+            
+            # Debug output for projectiles
+            if hasattr(entity, 'id') and str(entity.id).startswith('projectile'):
+                print(f"🚀 Processing projectile entity {entity.id} at ({transform.x:.2f}, {transform.y:.2f})")
                 
             # Create node if it doesn't exist yet
-            if sprite.panda_node is None and sprite.image_path:
-                sprite.panda_node = self._create_sprite_node(entity.id, sprite.image_path)
+            if sprite.panda_node is None:
+                if sprite.image_path or (sprite.image_path is None and sprite.sprite_sheet is None):
+                    sprite.panda_node = self._create_sprite_node(entity.id, sprite.image_path)
+                    if sprite.panda_node:
+                        print(f"✅ Created sprite node for entity {entity.id}")
+                    else:
+                        print(f"❌ Failed to create sprite node for entity {entity.id}")
             
             # Update transform and appearance
             if sprite.panda_node:
@@ -190,7 +223,7 @@ class RenderSystem(System):
                     if current_frame:
                         self._apply_animation_frame(sprite.panda_node, current_frame)
             else:
-                # If node creation failed or image_path is None, ensure panda_node is None
+                # If node creation failed, ensure panda_node is None
                 sprite.panda_node = None
 
         self._cleanup_stale_nodes(current_sprite_entity_ids)

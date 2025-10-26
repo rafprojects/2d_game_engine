@@ -1,5 +1,5 @@
 from engine.core.system import System
-from engine.core.components.transform_component import TransformComponent
+from engine.graphics.components.transform_component import TransformComponent
 from engine.audio.components.sound_component import SoundComponent, SoundType
 from engine.audio.components.audio_listener_component import AudioListenerComponent
 from panda3d.core import AudioManager, AudioSound, Vec3

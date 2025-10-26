@@ -1,2 +1,3 @@
-# engine/core/components/__init__.py
-from .transform_component import TransformComponent
+from .movement_component import MovementComponent
+
+__all__ = ['MovementComponent']

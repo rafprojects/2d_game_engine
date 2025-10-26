@@ -1,15 +1,10 @@
-from panda3d.core import Vec3
-from engine.core.component import Component
-from typing import Dict, List, Optional
-from enum import Enum
 import uuid
+from typing import Dict, List, Optional
 
-class SoundType(Enum):
-    """Types of sound effects supported."""
-    EFFECT = "effect"      # Short sound effects (gunshots, jumps, etc.)
-    AMBIENT = "ambient"    # Looping ambient sounds (rain, wind, etc.)
-    VOICE = "voice"        # Voice lines and speech
-    UI = "ui"             # User interface sounds (clicks, beeps, etc.)
+from panda3d.core import Vec3
+
+from engine.core.component import Component
+from engine.audio.typesg.sound_type import SoundType
 
 class SoundComponent(Component):
     """

@@ -4,6 +4,24 @@ from engine.core.component import Component
 class SpriteComponent(Component):
     def __init__(self, image_path: str | None = None, sprite_sheet = None, layer: int = 0, 
                  color: Vec4 = Vec4(1, 1, 1, 1), opacity: float = 1.0):
+        # Validation - allow None image_path for colored rectangles
+        if image_path is None and sprite_sheet is None:
+            # This is allowed for colored rectangles
+            pass
+        elif image_path is None and sprite_sheet is not None:
+            print("Warning: SpriteComponent with sprite_sheet should also have image_path for texture loading")
+        
+        if sprite_sheet is not None and image_path is None:
+            print("Warning: SpriteComponent with sprite_sheet should also have image_path for texture loading")
+        
+        # Validate layer
+        if not isinstance(layer, int):
+            raise TypeError("Layer must be an integer")
+        
+        # Validate opacity
+        if not (0.0 <= opacity <= 1.0):
+            raise ValueError("Opacity must be between 0.0 and 1.0")
+            
         self.image_path = image_path
         self.layer = layer  # For sorting render order
         self.color = color
@@ -18,8 +36,13 @@ class SpriteComponent(Component):
         self.is_playing = False
     
     def play_animation(self, animation_name: str, reset: bool = True):
-        """Play the specified animation"""
+        """Play the specified animation with error handling"""
+        if not animation_name:
+            print("Error: Animation name cannot be empty")
+            return False
+            
         if not self.sprite_sheet:
+            print(f"Error: Cannot play animation '{animation_name}' - no sprite sheet available")
             return False
             
         animation = self.sprite_sheet.get_animation(animation_name)
@@ -29,8 +52,11 @@ class SpriteComponent(Component):
                 self.current_frame_index = 0
                 self.animation_time = 0.0
             self.is_playing = True
+            print(f"Started animation: {animation_name}")
             return True
-        return False
+        else:
+            print(f"Error: Animation '{animation_name}' not found in sprite sheet")
+            return False
     
     def stop_animation(self):
         """Stop the current animation"""

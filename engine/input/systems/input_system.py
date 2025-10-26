@@ -1,12 +1,13 @@
+from typing import List, Dict
+
 from direct.showbase.ShowBase import ShowBase
 from panda3d.core import InputDevice, ButtonHandle
 
 from engine.core.system import System
 from engine.input.components.input_component import InputComponent
 from engine.input.input_bindings import InputBinding
-from typing import List, Dict
 
-# Panda3D Gamepad Axis Name to Enum Mapping
+# Panda3D Gamepad Axis Mapping
 PANDA_GAMEPAD_AXES = {
     "lstick_x": InputDevice.Axis.left_x,
     "lstick_y": InputDevice.Axis.left_y,

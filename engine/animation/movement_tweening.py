@@ -7,10 +7,13 @@ the core movement logic.
 """
 
 import math
-from panda3d.core import Vec2
-from engine.core.component import Component
-from engine.animation.tweening import EasingType, TweenManager
 from typing import Optional, Callable, TYPE_CHECKING
+
+from panda3d.core import Vec2
+
+from engine.core.component import Component
+from engine.animation.tweening import TweenManager
+from engine.animation.typesg.animation import EasingType
 
 if TYPE_CHECKING:
     from engine.animation.tweening import Tween
