@@ -50,6 +50,7 @@ class ResourceManager(System):
         self.asset_tags: Dict[str, Set[str]] = {}  # tag -> asset_paths
         
         # Configuration
+        self.asset_roots: List[str] = []  # Ordered search paths (0 = highest priority)
         self.asset_root = "assets"
         self.cache_size_limit = 100 * 1024 * 1024  # 100MB default
         self.auto_unload_unused = True
@@ -94,6 +95,33 @@ class ResourceManager(System):
             'character': set(),
             'effect': set()
         })
+
+    @property
+    def asset_root(self) -> str:
+        """Primary asset root (highest-priority mount)."""
+        return self.asset_roots[0]
+
+    @asset_root.setter
+    def asset_root(self, path: str):
+        normalized = self._normalize_root(path)
+        self.asset_roots = [normalized]
+
+    def mount_asset_root(self, path: str, prepend: bool = True):
+        """Add a new asset root, optionally as highest priority."""
+        normalized = self._normalize_root(path)
+        if normalized in self.asset_roots:
+            self.asset_roots.remove(normalized)
+        if prepend:
+            self.asset_roots.insert(0, normalized)
+        else:
+            self.asset_roots.append(normalized)
+
+    def unmount_asset_root(self, path: str):
+        """Remove an asset root if present."""
+        normalized = self._normalize_root(path)
+        self.asset_roots = [root for root in self.asset_roots if root != normalized]
+        if not self.asset_roots:
+            self.asset_roots = [self._normalize_root("assets")]
     
     def update(self, dt: float):
         """Update resource manager."""
@@ -111,7 +139,8 @@ class ResourceManager(System):
                       group: Optional[str] = None, tags: Optional[List[str]] = None,
                       metadata: Optional[Dict[str, Any]] = None) -> bool:
         """Register an asset for management."""
-        if not os.path.exists(os.path.join(self.asset_root, path)):
+        full_path = self._resolve_asset_path(path)
+        if not full_path:
             print(f"Warning: Asset not found: {path}")
             return False
         
@@ -120,7 +149,6 @@ class ResourceManager(System):
             asset_type = self._detect_asset_type(path)
         
         # Create asset info
-        full_path = os.path.join(self.asset_root, path)
         asset_info = AssetInfo(
             path=path,
             asset_type=asset_type,
@@ -295,9 +323,9 @@ class ResourceManager(System):
     
     def validate_asset(self, path: str) -> bool:
         """Validate an asset file exists and is readable."""
-        full_path = os.path.join(self.asset_root, path)
+        full_path = self._resolve_asset_path(path)
         
-        if not os.path.exists(full_path):
+        if not full_path:
             return False
         
         try:
@@ -348,8 +376,8 @@ class ResourceManager(System):
         if enabled:
             # Initialize file watchers for loaded assets
             for path in self.asset_cache.keys():
-                full_path = os.path.join(self.asset_root, path)
-                if os.path.exists(full_path):
+                full_path = self._resolve_asset_path(path)
+                if full_path:
                     self.file_watchers[path] = os.path.getmtime(full_path)
             
             print("🔥 Hot reload enabled")
@@ -362,6 +390,7 @@ class ResourceManager(System):
         manifest_data = {
             'generated': time.time(),
             'asset_root': self.asset_root,
+            'asset_roots': list(self.asset_roots),
             'total_assets': len(self.assets),
             'groups': {name: list(assets) for name, assets in self.asset_groups.items()},
             'assets': {}
@@ -406,6 +435,20 @@ class ResourceManager(System):
         except Exception as e:
             print(f"❌ Failed to load manifest: {e}")
             return False
+
+    def _normalize_root(self, path: str) -> str:
+        base = path or "assets"
+        return os.path.normpath(os.path.abspath(base))
+
+    def _iter_candidate_paths(self, relative_path: str):
+        for root in self.asset_roots:
+            yield os.path.join(root, relative_path)
+
+    def _resolve_asset_path(self, relative_path: str) -> Optional[str]:
+        for candidate in self._iter_candidate_paths(relative_path):
+            if os.path.exists(candidate):
+                return candidate
+        return None
     
     def _detect_asset_type(self, path: str) -> AssetType:
         """Automatically detect asset type from file extension."""
@@ -419,7 +462,10 @@ class ResourceManager(System):
     
     def _load_asset_data(self, path: str, asset_type: AssetType) -> Optional[Any]:
         """Load asset data based on type."""
-        full_path = os.path.join(self.asset_root, path)
+        full_path = self._resolve_asset_path(path)
+        if not full_path:
+            print(f"Error loading {asset_type.value} asset {path}: file not found in mounted roots")
+            return None
         
         try:
             if asset_type == AssetType.TEXTURE:
@@ -469,15 +515,16 @@ class ResourceManager(System):
     def _check_file_changes(self):
         """Check for file changes for hot reload."""
         for path, last_modified in list(self.file_watchers.items()):
-            full_path = os.path.join(self.asset_root, path)
-            
-            if os.path.exists(full_path):
-                current_modified = os.path.getmtime(full_path)
-                
-                if current_modified > last_modified:
-                    print(f"🔄 Hot reloading asset: {path}")
-                    self.load_asset(path, force_reload=True)
-                    self.file_watchers[path] = current_modified
+            full_path = self._resolve_asset_path(path)
+            if not full_path:
+                del self.file_watchers[path]
+                continue
+
+            current_modified = os.path.getmtime(full_path)
+            if current_modified > last_modified:
+                print(f"🔄 Hot reloading asset: {path}")
+                self.load_asset(path, force_reload=True)
+                self.file_watchers[path] = current_modified
     
     def _cleanup_unused_assets(self):
         """Clean up unused assets based on LRU and reference counting."""

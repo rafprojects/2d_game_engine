@@ -38,6 +38,11 @@ class ProjectileSystem(System):
             if not projectile_comp or not transform_comp:
                 continue
 
+            # Early removal if projectile is marked dead by other systems (e.g., DamageSystem)
+            if not projectile_comp.is_alive:
+                self.projectiles_to_remove.append(entity.id)
+                continue
+
             # Update lifetime
             projectile_comp.time_alive += dt
             if projectile_comp.time_alive >= projectile_comp.lifetime:
