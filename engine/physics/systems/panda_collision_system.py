@@ -5,13 +5,16 @@ This module provides integration between the ECS collision system and Panda3D's
 built-in collision detection system for improved performance and features.
 """
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Set, Tuple
+import uuid
 
 from panda3d.core import (
     CollisionTraverser, CollisionHandlerQueue, CollisionNode,
-    NodePath, Vec3, BitMask32, CollisionSolid,
-    CollisionSphere, CollisionBox, CollisionCapsule
+    NodePath, Vec3, Vec2, BitMask32, CollisionSolid,
+    CollisionSphere, CollisionBox, CollisionCapsule,
+    CardMaker, TransparencyAttrib, LineSegs
 )
+import math
 from panda3d.bullet import BulletWorld
 
 from engine.core.system import System
@@ -20,6 +23,11 @@ from engine.graphics.components.transform_component import TransformComponent
 from engine.physics.components.collider_component import ColliderComponent
 from engine.physics.components.panda_collision_node import PandaCollisionNode
 from engine.physics.typesg.collider_type import ColliderType
+from engine.physics.systems.collision_system import (
+    CollisionEvent,
+    TriggerEnterEvent,
+    TriggerExitEvent,
+)
 
 
 class PandaCollisionEvent(Event):
@@ -77,6 +85,9 @@ class PandaCollisionSystem(System):
         # Configuration
         self.max_collision_checks = 1000  # Safety limit
         self.collision_mask_size = 32  # Support 32 collision layers
+        self.boundary_nodes: Dict[str, NodePath] = {}
+        self._viz_enabled = False
+        self._debug_overlays = {}
 
         # Setup collision traverser
         # Note: We don't add the root node here. Instead, individual CollisionNodes
@@ -88,7 +99,9 @@ class PandaCollisionSystem(System):
         if not hasattr(self, '_collision_root'):
             self._collision_root = NodePath("ecs_collision_root")
             if self.base:
-                self._collision_root.reparentTo(self.base.render)
+                # Align with 2D scene graph for visibility and consistent transforms
+                parent_np = getattr(self.base, 'aspect2d', None) or self.base.render
+                self._collision_root.reparentTo(parent_np)
         return self._collision_root
 
     def update(self, dt: float):
@@ -101,6 +114,13 @@ class PandaCollisionSystem(System):
         collision_entities = self.world.get_entities_with_components(
             TransformComponent, ColliderComponent
         )
+
+        # Reset collider state for trigger enter/exit calculations
+        for entity in collision_entities:
+            collider = self.world.get_component(entity.id, ColliderComponent)
+            if collider:
+                collider.was_colliding_entities = collider.colliding_entities.copy()
+                collider.colliding_entities.clear()
 
         # Update collision nodes for all entities
         for entity in collision_entities:
@@ -138,26 +158,52 @@ class PandaCollisionSystem(System):
             collision_node_path = NodePath(collision_node)
             collision_node_path.reparentTo(self.collision_root)
 
-            # Set collision mask from ECS collision layer
-            mask = BitMask32.bit(collider.collision_layer - 1)
-            collision_node.set_into_collide_mask(mask)
-            collision_node.set_from_collide_mask(BitMask32.allOn())
+            # Initial collision masks
+            into_mask = BitMask32.bit(max(0, collider.collision_layer - 1))
+            from_mask = self._int_to_bitmask32(collider.collision_mask)
+            collision_node.set_into_collide_mask(into_mask)
+            collision_node.set_from_collide_mask(from_mask)
 
             self.collision_nodes[node_name] = collision_node_path
             self.entity_to_node[str(entity_id)] = node_name
             
             # Add the collision node to the traverser
             self.collision_traverser.add_collider(collision_node_path, self.collision_handler)
+
+            # Attach PandaCollisionNode component for lifecycle/inspection
+            try:
+                self.world.add_component(entity_id, PandaCollisionNode(collision_node_path, collision_node))
+            except Exception as e:
+                # Non-fatal: continue without the helper component
+                print(f"[PandaCollisionSystem] Warning: failed to attach PandaCollisionNode: {e}")
+            # If visualization is enabled, immediately show this new node as well
+            if self._viz_enabled:
+                try:
+                    collision_node_path.show()
+                    if hasattr(collision_node, 'show'):
+                        collision_node.show()
+                    if hasattr(collision_node, 'showBounds'):
+                        collision_node.showBounds()
+                    collision_node_path.setTransparency(True)
+                    collision_node_path.setColor(1, 1, 0, 0.5)
+                except Exception:
+                    pass
         else:
             collision_node_path = self.collision_nodes[node_name]
 
         # Update collision solid
         self._update_collision_solid(collision_node_path, collider, transform)
 
-        # Update transform
-        # Update transform - use 2D positioning for 2D game
-        # Position in 3D space but keep Z at 0 for 2D gameplay
-        pos_3d = Vec3(transform.x, transform.y, 0)
+        # Keep masks in sync with component each frame (cheap and robust)
+        collision_node = collision_node_path.node()
+        into_mask = BitMask32.bit(max(0, collider.collision_layer - 1))
+        from_mask = self._int_to_bitmask32(collider.collision_mask)
+        collision_node.set_into_collide_mask(into_mask)
+        collision_node.set_from_collide_mask(from_mask)
+
+        # Update transform - map 2D (x, y) to Panda 3D (x, 0, z)
+        # aspect2d uses X/Z for 2D; keep Y at 0 for a flat plane
+        pos_3d = Vec3(transform.x, 0, transform.y)
         collision_node_path.set_pos(pos_3d)
         collision_node_path.set_hpr(Vec3(0, 0, transform.rotation))
         
@@ -165,6 +211,11 @@ class PandaCollisionSystem(System):
         panda_node_comp = self.world.get_component(entity_id, PandaCollisionNode)
         if panda_node_comp:
             panda_node_comp.update_transform(transform)
+
+        # Ensure and update debug overlay for reliable coloring
+        ent_id_str = str(entity_id)
+        self._ensure_debug_overlay(ent_id_str, collider)
+        self._update_debug_overlay(ent_id_str, collider, transform)
 
     def _update_collision_solid(self, node_path: NodePath, collider: ColliderComponent,
                                transform: TransformComponent):
@@ -185,9 +236,12 @@ class PandaCollisionSystem(System):
             # Create box collision
             half_width = collider.size.x / 2
             half_height = collider.size.y / 2
+            # Map 2D (width, height) to Panda3D X and Z extents;
+            # keep Y (depth) very thin so it lies on the X/Z plane
+            depth = 0.05
             return CollisionBox(
-                Vec3(-half_width, -half_height, -0.1),  # min point
-                Vec3(half_width, half_height, 0.1)      # max point
+                Vec3(-half_width, -depth, -half_height),  # min point (x, y, z)
+                Vec3(half_width, depth, half_height)      # max point
             )
 
         elif collider.collider_type == ColliderType.CIRCLE:
@@ -226,6 +280,8 @@ class PandaCollisionSystem(System):
             
         print(f"🐼 Processing {num_entries} collision entries")
         
+        processed_pairs: Set[Tuple[uuid.UUID, uuid.UUID]] = set()
+
         for i in range(num_entries):
             entry = self.collision_handler.get_entry(i)
 
@@ -234,23 +290,54 @@ class PandaCollisionSystem(System):
             into_node = entry.get_into_node()
 
             # Extract entity IDs from node names
-            from_entity_id = self._extract_entity_id(from_node.get_name())
-            into_entity_id = self._extract_entity_id(into_node.get_name())
+            from_entity_id_str = self._extract_entity_id(from_node.get_name())
+            into_entity_id_str = self._extract_entity_id(into_node.get_name())
 
-            if from_entity_id and into_entity_id and from_entity_id != into_entity_id:
+            if from_entity_id_str and into_entity_id_str and from_entity_id_str != into_entity_id_str:
                 # Check if this is an actual collision (not just potential)
                 if entry.has_surface_point():
                     # Get collision data
                     collision_point = entry.get_surface_point(self.collision_root)
                     collision_normal = entry.get_surface_normal(self.collision_root)
 
-                    print(f"💥 REAL COLLISION: {from_entity_id} ↔ {into_entity_id}")
+                    # Convert IDs back to UUIDs used by ECS
+                    try:
+                        from_uuid = uuid.UUID(from_entity_id_str)
+                        into_uuid = uuid.UUID(into_entity_id_str)
+                    except Exception:
+                        # Fallback: skip if IDs can't be parsed
+                        continue
+
+                    # De-dup pairs (treat A-B same as B-A)
+                    sorted_pair = sorted((from_uuid, into_uuid), key=lambda u: str(u))
+                    pair_key: Tuple[uuid.UUID, uuid.UUID] = (sorted_pair[0], sorted_pair[1])
+                    if pair_key in processed_pairs:
+                        continue
+                    processed_pairs.add(pair_key)
+
+                    print(f"💥 REAL COLLISION: {from_uuid} ↔ {into_uuid}")
 
                     # Fire collision event
                     self.world.event_manager.publish(
-                        PandaCollisionEvent(from_entity_id, into_entity_id,
+                        PandaCollisionEvent(str(from_uuid), str(into_uuid),
                                           collision_point, collision_normal)
                     )
+
+                    # Update collider runtime sets
+                    collider_a = self.world.get_component(from_uuid, ColliderComponent)
+                    collider_b = self.world.get_component(into_uuid, ColliderComponent)
+                    if collider_a:
+                        collider_a.colliding_entities.add(into_uuid)
+                    if collider_b:
+                        collider_b.colliding_entities.add(from_uuid)
+
+                    # Publish generic 2D CollisionEvent for non-triggers
+                    if collider_a and collider_b and (not collider_a.is_trigger and not collider_b.is_trigger):
+                        # Convert normal to 2D
+                        normal_2d = Vec2(collision_normal.x, collision_normal.y)
+                        self.world.event_manager.publish(
+                            CollisionEvent(from_uuid, into_uuid, normal_2d)
+                        )
 
                     self.collision_pairs_found += 1
                 else:
@@ -262,6 +349,9 @@ class PandaCollisionSystem(System):
             # Safety check to prevent infinite loops
             if self.collision_checks_this_frame >= self.max_collision_checks:
                 break
+
+        # After processing all collisions, fire trigger enter/exit events
+        self._fire_trigger_events()
 
     def _extract_entity_id(self, node_name: str) -> Optional[str]:
         """Extract entity ID from collision node name."""
@@ -295,6 +385,23 @@ class PandaCollisionSystem(System):
                 collision_node_path.removeNode()
                 del self.collision_nodes[node_name]
             del self.entity_to_node[entity_id]
+        # Remove debug overlay if present
+        overlay_np = self._debug_overlays.pop(entity_id, None)
+        if overlay_np:
+            try:
+                overlay_np.removeNode()
+            except Exception:
+                pass
+
+    # --- World lifecycle hooks ---
+    def on_entity_removed(self, entity_id, components):
+        """World hook: cleanup collision data when entity is destroyed."""
+        self.remove_entity(str(entity_id))
+
+    def on_component_removed(self, entity_id, component):
+        """World hook: cleanup when collider component is removed."""
+        if isinstance(component, ColliderComponent) or isinstance(component, PandaCollisionNode):
+            self.remove_entity(str(entity_id))
 
     def get_collision_stats(self) -> Dict[str, int]:
         """Get collision detection performance statistics."""
@@ -312,6 +419,13 @@ class PandaCollisionSystem(System):
 
         self.collision_nodes.clear()
         self.entity_to_node.clear()
+        # Remove overlays
+        for np in self._debug_overlays.values():
+            try:
+                np.removeNode()
+            except Exception:
+                pass
+        self._debug_overlays.clear()
 
         # Clean up physics world
         if self.bullet_world:
@@ -321,61 +435,214 @@ class PandaCollisionSystem(System):
     def show_collision_nodes(self, show: bool = True):
         """Show or hide collision node visualizations."""
         print(f"🔍 Setting collision visualization to: {'ON' if show else 'OFF'}")
-        
+        self._viz_enabled = bool(show)
+
         for node_name, node_path in self.collision_nodes.items():
             if show:
                 print(f"  📍 Showing collision node: {node_name}")
                 node_path.show()
-                # Also show bounds for better visualization
                 collision_node = node_path.node()
+                # Show the actual collision solids and bounds
+                if hasattr(collision_node, 'show'):
+                    collision_node.show()
                 if hasattr(collision_node, 'showBounds'):
                     collision_node.showBounds()
-                # Make sure it's visible
-                node_path.setColor(1, 1, 0, 0.5)  # Semi-transparent yellow
+                # Make semi-transparent for visibility
+                node_path.setTransparency(True)
+                node_path.setColor(1, 1, 0, 0.5)
             else:
                 print(f"  📍 Hiding collision node: {node_name}")
                 node_path.hide()
-                # Hide bounds too
                 collision_node = node_path.node()
+                if hasattr(collision_node, 'hide'):
+                    collision_node.hide()
                 if hasattr(collision_node, 'hideBounds'):
                     collision_node.hideBounds()
+
+        # Also toggle visualization for boundary nodes
+        for name, node_path in self.boundary_nodes.items():
+            if show:
+                print(f"  📍 Showing boundary node: {name}")
+                node_path.show()
+                node_path.setTransparency(True)
+                node_path.setColor(1, 1, 0, 0.35)
+                node = node_path.node()
+                if hasattr(node, 'showBounds'):
+                    node.showBounds()
+            else:
+                print(f"  📍 Hiding boundary node: {name}")
+                node_path.hide()
+                node = node_path.node()
+                if hasattr(node, 'hideBounds'):
+                    node.hideBounds()
+
+        # Toggle debug overlays visibility to match
+        for ent_id, overlay_np in self._debug_overlays.items():
+            if show:
+                overlay_np.show()
+                overlay_np.setTransparency(TransparencyAttrib.M_alpha)
+                overlay_np.setColor(1, 1, 0, 0.5)
+            else:
+                overlay_np.hide()
 
     def highlight_collision(self, entity_id: str, duration: float = 0.2):
         """Temporarily highlight a collision node when collision occurs."""
         print(f"🎯 Attempting to highlight collision for entity {entity_id}")
         
-        if entity_id in self.entity_to_node:
-            node_name = self.entity_to_node[entity_id]
-            print(f"  📍 Found collision node: {node_name}")
-            
-            if node_name in self.collision_nodes:
-                node_path = self.collision_nodes[node_name]
-                # Store original color
-                original_color = node_path.getColor()
-                # Set highlight color (red for collision)
-                node_path.setColor(1, 0, 0, 1)  # Red highlight
-                
-                print(f"💥 Highlighting collision for entity {entity_id} - set to RED")
-                
-                # Schedule color reset
-                def reset_color():
-                    if node_path:
-                        node_path.setColor(original_color)
-                        print(f"🔄 Reset collision highlight for entity {entity_id}")
-                
-                # Use task manager to reset color after duration
-                if hasattr(self, 'base') and self.base:
-                    self.base.taskMgr.doMethodLater(duration, lambda task: reset_color(), f"reset_collision_color_{entity_id}")
-            else:
-                print(f"  ❌ Collision node {node_name} not found in collision_nodes dict")
+        # Prefer the debug overlay for coloring
+        overlay_np = self._debug_overlays.get(entity_id)
+        if overlay_np is None:
+            # Fallback to collision node path
+            if entity_id in self.entity_to_node:
+                node_name = self.entity_to_node[entity_id]
+                overlay_np = self.collision_nodes.get(node_name)
+        if overlay_np is None:
+            print(f"  ❌ No overlay or node found to highlight for {entity_id}")
+            return
+
+        # Set to red, then schedule reset back to yellow
+        overlay_np.setTransparency(TransparencyAttrib.M_alpha)
+        overlay_np.setColor(1, 0, 0, 1)
+        print(f"💥 Highlighting collision for entity {entity_id} - overlay RED")
+
+        if hasattr(self, 'base') and self.base:
+            def _reset_task(task):
+                try:
+                    overlay_np.setColor(1, 1, 0, 0.5)
+                    overlay_np.setTransparency(TransparencyAttrib.M_alpha)
+                except Exception:
+                    pass
+                return task.done
+            self.base.taskMgr.doMethodLater(duration, _reset_task, f"reset_collision_color_{entity_id}")
+
+    # --- Debug overlay helpers ---
+    def _ensure_debug_overlay(self, entity_id: str, collider: ColliderComponent):
+        if entity_id in self._debug_overlays:
+            return
+        np = None
+        if collider.collider_type in (ColliderType.RECTANGLE, ColliderType.BOX):
+            cm = CardMaker(f"viz_{entity_id}")
+            cm.set_frame(-0.5, 0.5, -0.5, 0.5)
+            np = NodePath(cm.generate())
+            # Rotate from XY to XZ plane
+            np.set_hpr(0, -90, 0)
+        elif collider.collider_type in (ColliderType.CIRCLE, ColliderType.SPHERE):
+            ls = LineSegs()
+            ls.set_thickness(2.0)
+            segs = 48
+            for i in range(segs + 1):
+                t = (i / segs) * (2 * math.pi)
+                x = math.cos(t)
+                z = math.sin(t)
+                if i == 0:
+                    ls.move_to(x, 0, z)
+                else:
+                    ls.draw_to(x, 0, z)
+            np = NodePath(ls.create())
         else:
-            print(f"  ❌ Entity {entity_id} not found in entity_to_node mapping")
-            print(f"    Available entities: {list(self.entity_to_node.keys())}")
+            cm = CardMaker(f"viz_{entity_id}")
+            cm.set_frame(-0.5, 0.5, -0.5, 0.5)
+            np = NodePath(cm.generate())
+            np.set_hpr(0, -90, 0)
+        np.reparentTo(self.collision_root)
+        np.setTransparency(TransparencyAttrib.M_alpha)
+        np.setColor(1, 1, 0, 0.5)
+        if not self._viz_enabled:
+            np.hide()
+        self._debug_overlays[entity_id] = np
+
+    def _update_debug_overlay(self, entity_id: str, collider: ColliderComponent, transform: TransformComponent):
+        np = self._debug_overlays.get(entity_id)
+        if not np:
+            return
+        # Match position and rotation
+        np.set_pos(transform.x, 0, transform.y)
+        np.set_hpr(0, 0, transform.rotation)
+        # Match size
+        if collider.collider_type in (ColliderType.RECTANGLE, ColliderType.BOX):
+            # Scale the card to collider size (x,z)
+            sx = max(0.001, collider.size.x)
+            sz = max(0.001, collider.size.y)
+            np.set_scale(sx, 1.0, sz)
+        elif collider.collider_type in (ColliderType.CIRCLE, ColliderType.SPHERE):
+            r = max(0.001, collider.radius)
+            np.set_scale(r, 1.0, r)
 
     def is_collision_nodes_visible(self) -> bool:
         """Check if collision nodes are currently visible."""
-        if not self.collision_nodes:
-            return False
-        # Check if the first node is visible (assuming all are in the same state)
-        first_node = next(iter(self.collision_nodes.values()))
-        return not first_node.is_hidden()
+        return self._viz_enabled
+
+    # --- Helpers and optional API ---
+    def _int_to_bitmask32(self, mask_value: int) -> BitMask32:
+        """Convert an integer bitfield to Panda3D BitMask32."""
+        bm = BitMask32.allOff()
+        # Support up to 32 layers
+        for i in range(32):
+            if mask_value & (1 << i):
+                bm.set_bit(i)
+        return bm
+
+    def _fire_trigger_events(self):
+        """Compute trigger enter/exit based on colliding sets and publish events."""
+        entities = self.world.get_entities_with_components(TransformComponent, ColliderComponent)
+        for entity in entities:
+            collider = self.world.get_component(entity.id, ColliderComponent)
+            if not collider or not collider.is_trigger:
+                continue
+
+            new_collisions = collider.colliding_entities - collider.was_colliding_entities
+            for other_id in new_collisions:
+                self.world.event_manager.publish(TriggerEnterEvent(entity.id, other_id))
+
+            ended_collisions = collider.was_colliding_entities - collider.colliding_entities
+            for other_id in ended_collisions:
+                self.world.event_manager.publish(TriggerExitEvent(entity.id, other_id))
+
+    def set_playfield_bounds(self, min_x: float, min_y: float, max_x: float, max_y: float):
+        """Create static into-only boundary colliders around the playfield.
+
+        The boundaries are implemented as thin CollisionBox solids on the X/Z plane
+        and reparented under the collision_root. They use into-masks only so they
+        don't need to be added to the traverser.
+        """
+        # Remove existing boundaries first
+        self.remove_playfield_bounds()
+
+        thickness = 0.05
+        width = max_x - min_x
+        height = max_y - min_y
+        # Use a fixed layer for boundaries (layer 5 by default)
+        BOUNDARY_LAYER = 5
+        boundary_mask = BitMask32.bit(max(0, BOUNDARY_LAYER - 1))
+
+        def make_wall(name: str, center_x: float, center_z: float, half_x: float, half_z: float):
+            node = CollisionNode(name)
+            # Use very thin Y thickness (depth) since our 2D lies on X/Z
+            box = CollisionBox(Vec3(-half_x, -thickness, -half_z), Vec3(half_x, thickness, half_z))
+            node.add_solid(box)
+            node.set_from_collide_mask(BitMask32.allOff())  # into-only
+            node.set_into_collide_mask(boundary_mask)
+            np = NodePath(node)
+            np.reparentTo(self.collision_root)
+            np.set_pos(center_x, 0, center_z)
+            self.boundary_nodes[name] = np
+
+        # Left wall
+        make_wall("boundary_left", min_x - thickness, 0.0, thickness, height / 2)
+        # Right wall
+        make_wall("boundary_right", max_x + thickness, 0.0, thickness, height / 2)
+        # Bottom wall
+        make_wall("boundary_bottom", 0.0, min_y - thickness, width / 2, thickness)
+        # Top wall
+        make_wall("boundary_top", 0.0, max_y + thickness, width / 2, thickness)
+
+        self.playfield_bounds = (min_x, min_y, max_x, max_y)
+
+    def remove_playfield_bounds(self):
+        """Remove any existing boundary collider nodes."""
+        for np in self.boundary_nodes.values():
+            try:
+                np.removeNode()
+            except Exception:
+                pass
+        self.boundary_nodes.clear()

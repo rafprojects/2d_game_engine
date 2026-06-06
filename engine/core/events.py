@@ -41,6 +41,28 @@ class EntityDestroyedEvent(Event):
     def __init__(self, entity_id):
         self.entity_id = entity_id
 
+# --- Combat/Health Events ---
+
+class DamageAppliedEvent(Event):
+    """Published when damage is applied to a target."""
+    def __init__(self, source_entity_id, target_entity_id, amount: float):
+        self.source_entity_id = source_entity_id
+        self.target_entity_id = target_entity_id
+        self.amount = amount
+
+class HealthChangedEvent(Event):
+    """Published when an entity's health value changes."""
+    def __init__(self, entity_id, old_health: float, new_health: float, max_health: float):
+        self.entity_id = entity_id
+        self.old_health = old_health
+        self.new_health = new_health
+        self.max_health = max_health
+
+class EntityDiedEvent(Event):
+    """Published when an entity's health reaches zero or below."""
+    def __init__(self, entity_id):
+        self.entity_id = entity_id
+
 class ComponentAddedEvent(Event):
     def __init__(self, entity_id, component_type, component_instance):
         self.entity_id = entity_id

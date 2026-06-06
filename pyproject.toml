@@ -26,6 +26,8 @@ classifiers = [
 keywords = ["game", "engine", "2d", "ecs", "panda3d", "gamedev"]
 dependencies = [
     "panda3d>=1.10.14",
+    "jsonschema>=4.0.0",
+    "msgpack>=1.0.0",
 ]
 requires-python = ">=3.9"
 
@@ -57,6 +59,7 @@ py2d-engine = "tools.cli.project_gen:main"
 py2d-assets = "tools.cli.asset_tools:main"
 py2d-build = "tools.cli.build_tools:main"
 py2d-dev = "tools.cli.dev_setup:main"
+py2d-cartridge = "tools.cli.cartridge_pack:main"
 
 [tool.setuptools.packages.find]
 include = ["engine*", "tools*", "examples*"]

@@ -1,2 +1,4 @@
 panda3d
 watchdog>=3.0.0
+jsonschema>=4.0.0
+msgpack>=1.0.0

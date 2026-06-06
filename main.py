@@ -2,7 +2,9 @@
 from direct.showbase.ShowBase import ShowBase
 from direct.showbase.ShowBaseGlobal import globalClock
 from panda3d.core import Vec2, Filename, ClockObject # Import ClockObject for globalClock
+import argparse
 import os # Import os for path manipulation
+from pathlib import Path
 
 from engine.core.system import World
 from engine.graphics.components.transform_component import TransformComponent
@@ -13,6 +15,9 @@ from engine.graphics.systems.render_system import RenderSystem
 from engine.input.components.input_component import InputComponent
 from engine.input.systems.input_system import InputSystem
 from engine.input.input_bindings import InputBinding
+from engine.cartridge.loader import CartridgeLoader
+from engine.cartridge.errors import CartridgeError
+from engine.save_state.manager import SaveStateManager
 
 # Audio system imports
 try:
@@ -45,7 +50,7 @@ except ImportError:
     TWEENING_AVAILABLE = False
     MovementTweenComponent = None
 class Game(ShowBase):
-    def __init__(self):
+    def __init__(self, cartridge_path: str | None = None, extract_dir: str | None = None):
         ShowBase.__init__(self)
         print("🎮 Game initialized with enhanced movement system!")
         
@@ -74,7 +79,30 @@ class Game(ShowBase):
         self.movement_system = MovementSystem(self.world)
         self.world.add_system(self.movement_system)
 
-        # Try to find an assets directory
+        self.resource_manager = None
+        self.asset_streaming_system = None
+        if ASSETS_AVAILABLE:
+            self.resource_manager = ResourceManager(self.world, self)
+            self.world.add_system(self.resource_manager)
+            self.asset_streaming_system = AssetStreamingSystem(self.world, self.resource_manager)
+            self.world.add_system(self.asset_streaming_system)
+
+        self.cartridge_loader = None
+        self.cartridge_context = None
+        self.save_state_manager = SaveStateManager(self.world, storage_root=Path("saves"))
+        if cartridge_path:
+            loaded = self._load_cartridge(cartridge_path, extract_dir)
+            if not loaded:
+                print("⚠️ Falling back to built-in demo entity")
+                self._setup_default_demo()
+        else:
+            self._setup_default_demo()
+
+        # Game loop task
+        self.taskMgr.add(self.update_game, "update_game_task")
+
+    def _setup_default_demo(self):
+        """Spawn the legacy demo entity if no cartridge is provided."""
         script_dir = os.path.dirname(os.path.abspath(__file__))
         assets_dir = os.path.join(script_dir, "assets")
         if not os.path.exists(assets_dir):
@@ -88,94 +116,108 @@ class Game(ShowBase):
         if not os.path.exists(test_image_path):
             print(f"ERROR: Test image not found at {test_image_path}")
             print("Please create a placeholder image (e.g., 'player.png') in the 'assets' directory to see the sprite.")
+            return
+
+        player_entity = self.world.create_entity("player")  # Named for easier debugging
+        # Use center position like minimal.py, and scale that works with our render system
+        self.world.add_component(player_entity.id, TransformComponent(x=0.0, y=0.0, scale_x=1.0, scale_y=1.0))
+        self.world.add_component(player_entity.id, SpriteComponent(image_path=test_image_path, layer=1))
+
+        # Add movement component with reasonable values for aspect2d
+        self.world.add_component(player_entity.id, MovementComponent(
+            base_speed=1.0,  # 1 unit per second in aspect2d coordinates
+            acceleration=5.0,  # Fast response
+            deceleration=8.0,  # Quick stop
+            max_speed_multiplier=3.0  # Allow up to 3x speed boost
+        ))
+
+        # Add optional tweening effects for visual polish
+        if TWEENING_AVAILABLE:
+            tween_comp = MovementTweenComponent()
+            tween_comp.set_base_transform(Vec2(0, 0), Vec2(1, 1), 0.0)
+            tween_comp.set_preset("smooth")  # Start with smooth preset
+            self.world.add_component(player_entity.id, tween_comp)
+            print("✅ Tweening effects enabled - Use number keys (1-4) for presets!")
         else:
-            player_entity = self.world.create_entity("player") # Named for easier debugging
-            # Use center position like minimal.py, and scale that works with our render system
-            self.world.add_component(player_entity.id, TransformComponent(position=Vec2(0, 0), scale=Vec2(1, 1)))
-            self.world.add_component(player_entity.id, SpriteComponent(image_path=test_image_path, layer=1))
-            
-            # Add movement component with reasonable values for aspect2d
-            self.world.add_component(player_entity.id, MovementComponent(
-                base_speed=1.0,  # 1 unit per second in aspect2d coordinates
-                acceleration=5.0,  # Fast response
-                deceleration=8.0,  # Quick stop
-                max_speed_multiplier=3.0  # Allow up to 3x speed boost
-            ))
-            
-            # Add optional tweening effects for visual polish
-            if TWEENING_AVAILABLE:
-                tween_comp = MovementTweenComponent()
-                tween_comp.set_base_transform(Vec2(0, 0), Vec2(1, 1), 0.0)
-                tween_comp.set_preset("smooth")  # Start with smooth preset
-                self.world.add_component(player_entity.id, tween_comp)
-                print("✅ Tweening effects enabled - Use number keys (1-4) for presets!")
-            else:
-                print("ℹ️  Running without tweening effects")
-            
+            print("ℹ️  Running without tweening effects")
 
-            # Setup Input for the player entity
-            player_input_bindings = {
-                "move_left": [
-                    InputBinding(input_type="key", event_name="a"),
-                    InputBinding(input_type="key", event_name="arrow_left"),
-                    InputBinding(input_type="gamepad_button", event_name="gamepad-dpad_left"),
-                    InputBinding(input_type="gamepad_axis", event_name="lstick_x", axis_direction="negative", axis_threshold=0.3)
-                ],
-                "move_right": [
-                    InputBinding(input_type="key", event_name="d"),
-                    InputBinding(input_type="key", event_name="arrow_right"),
-                    InputBinding(input_type="gamepad_button", event_name="gamepad-dpad_right"),
-                    InputBinding(input_type="gamepad_axis", event_name="lstick_x", axis_direction="positive", axis_threshold=0.3)
-                ],
-                "move_up": [
-                    InputBinding(input_type="key", event_name="w"),
-                    InputBinding(input_type="key", event_name="arrow_up"),
-                    InputBinding(input_type="gamepad_button", event_name="gamepad-dpad_up"),
-                    InputBinding(input_type="gamepad_axis", event_name="lstick_y", axis_direction="positive", axis_threshold=0.3)
-                ],
-                "move_down": [
-                    InputBinding(input_type="key", event_name="s"),
-                    InputBinding(input_type="key", event_name="arrow_down"),
-                    InputBinding(input_type="gamepad_button", event_name="gamepad-dpad_down"),
-                    InputBinding(input_type="gamepad_axis", event_name="lstick_y", axis_direction="negative", axis_threshold=0.3)
-                ],
-                "fire": [
-                    InputBinding(input_type="key", event_name="space"),
-                    InputBinding(input_type="mouse_button", event_name="mouse1"), # Left mouse button
-                    InputBinding(input_type="gamepad_button", event_name="gamepad-face_x") # 'X' on Xbox, Square on PS
-                ],
-                "alt_fire": [
-                    InputBinding(input_type="gamepad_button", event_name="gamepad-rtrigger"), # Panda uses 'gamepad-rtrigger' for button press
-                    InputBinding(input_type="gamepad_axis", event_name="rtrigger", axis_direction="positive", axis_threshold=0.1) # For analog trigger
-                ],
-                "apply_slowdown": [
-                    InputBinding(input_type="key", event_name="q"),
-                ],
-                "apply_speed_boost": [
-                    InputBinding(input_type="key", event_name="e"),
-                ],
-                "preset_snappy": [
-                    InputBinding(input_type="key", event_name="1"),
-                ],
-                "preset_smooth": [
-                    InputBinding(input_type="key", event_name="2"),
-                ],
-                "preset_bouncy": [
-                    InputBinding(input_type="key", event_name="3"),
-                ],
-                "preset_elastic": [
-                    InputBinding(input_type="key", event_name="4"),
-                ],
-                "toggle_tweening": [
-                    InputBinding(input_type="key", event_name="t"),
-                ]
-            }
-            self.world.add_component(player_entity.id, InputComponent(action_bindings=player_input_bindings))
-            print(f"Added InputComponent to entity: {player_entity.id}")
+        # Setup Input for the player entity
+        player_input_bindings = {
+            "move_left": [
+                InputBinding(input_type="key", event_name="a"),
+                InputBinding(input_type="key", event_name="arrow_left"),
+                InputBinding(input_type="gamepad_button", event_name="gamepad-dpad_left"),
+                InputBinding(input_type="gamepad_axis", event_name="lstick_x", axis_direction="negative", axis_threshold=0.3)
+            ],
+            "move_right": [
+                InputBinding(input_type="key", event_name="d"),
+                InputBinding(input_type="key", event_name="arrow_right"),
+                InputBinding(input_type="gamepad_button", event_name="gamepad-dpad_right"),
+                InputBinding(input_type="gamepad_axis", event_name="lstick_x", axis_direction="positive", axis_threshold=0.3)
+            ],
+            "move_up": [
+                InputBinding(input_type="key", event_name="w"),
+                InputBinding(input_type="key", event_name="arrow_up"),
+                InputBinding(input_type="gamepad_button", event_name="gamepad-dpad_up"),
+                InputBinding(input_type="gamepad_axis", event_name="lstick_y", axis_direction="positive", axis_threshold=0.3)
+            ],
+            "move_down": [
+                InputBinding(input_type="key", event_name="s"),
+                InputBinding(input_type="key", event_name="arrow_down"),
+                InputBinding(input_type="gamepad_button", event_name="gamepad-dpad_down"),
+                InputBinding(input_type="gamepad_axis", event_name="lstick_y", axis_direction="negative", axis_threshold=0.3)
+            ],
+            "fire": [
+                InputBinding(input_type="key", event_name="space"),
+                InputBinding(input_type="mouse_button", event_name="mouse1"),  # Left mouse button
+                InputBinding(input_type="gamepad_button", event_name="gamepad-face_x")  # 'X' on Xbox, Square on PS
+            ],
+            "alt_fire": [
+                InputBinding(input_type="gamepad_button", event_name="gamepad-rtrigger"),  # Panda uses 'gamepad-rtrigger' for button press
+                InputBinding(input_type="gamepad_axis", event_name="rtrigger", axis_direction="positive", axis_threshold=0.1)  # For analog trigger
+            ],
+            "apply_slowdown": [
+                InputBinding(input_type="key", event_name="q"),
+            ],
+            "apply_speed_boost": [
+                InputBinding(input_type="key", event_name="e"),
+            ],
+            "preset_snappy": [
+                InputBinding(input_type="key", event_name="1"),
+            ],
+            "preset_smooth": [
+                InputBinding(input_type="key", event_name="2"),
+            ],
+            "preset_bouncy": [
+                InputBinding(input_type="key", event_name="3"),
+            ],
+            "preset_elastic": [
+                InputBinding(input_type="key", event_name="4"),
+            ],
+            "toggle_tweening": [
+                InputBinding(input_type="key", event_name="t"),
+            ]
+        }
+        self.world.add_component(player_entity.id, InputComponent(action_bindings=player_input_bindings))
+        print(f"Added InputComponent to entity: {player_entity.id}")
 
-
-        # Game loop task
-        self.taskMgr.add(self.update_game, "update_game_task")
+    def _load_cartridge(self, cartridge_path: str, extract_dir: str | None) -> bool:
+        cartridge_path = os.path.abspath(cartridge_path)
+        extract_path = Path(extract_dir) if extract_dir else None
+        try:
+            self.cartridge_loader = CartridgeLoader(
+                world=self.world,
+                base=self,
+                resource_manager=self.resource_manager,
+                save_state_manager=self.save_state_manager,
+                extract_root=extract_path,
+            )
+            self.cartridge_context = self.cartridge_loader.load_archive(cartridge_path)
+            print(f"🧩 Loaded cartridge '{self.cartridge_context.manifest.name}' v{self.cartridge_context.manifest.version}")
+            return True
+        except CartridgeError as exc:
+            print(f"❌ Failed to load cartridge: {exc}")
+            return False
 
     def _handle_player_input_debug(self, input_comp: InputComponent):
         """Helper to print player input states for debugging."""
@@ -263,5 +305,10 @@ class Game(ShowBase):
         return task.cont
 
 if __name__ == '__main__':
-    app = Game()
+    parser = argparse.ArgumentParser(description="2D Panda3D Engine Launcher")
+    parser.add_argument("--cartridge", help="Path to a cartridge archive", default=None)
+    parser.add_argument("--cartridge-extract", help="Directory used for cartridge extraction cache", default=None)
+    args = parser.parse_args()
+
+    app = Game(cartridge_path=args.cartridge, extract_dir=args.cartridge_extract)
     app.run()
