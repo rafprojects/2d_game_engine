@@ -21,7 +21,7 @@ from panda3d.core import Vec2, Filename
 import os
 
 from engine.core.system import World
-from engine.core.components.transform_component import TransformComponent
+from engine.graphics.components.transform_component import TransformComponent
 from engine.core.components.movement_component import MovementComponent
 from engine.core.systems.movement_system import MovementSystem
 from engine.graphics.components.sprite_component import SpriteComponent
@@ -67,8 +67,7 @@ class MovementDemo(ShowBase):
         
         # Transform component
         self.world.add_component(self.player_entity.id, TransformComponent(
-            position=Vec2(0, 0), 
-            scale=Vec2(1, 1)
+            x=0.0, y=0.0, scale_x=1.0, scale_y=1.0
         ))
         
         # Sprite component

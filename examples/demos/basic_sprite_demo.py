@@ -1,9 +1,10 @@
 from direct.showbase.ShowBase import ShowBase
-from panda3d.core import Vec2, Filename, ClockObject
+from direct.showbase.ShowBaseGlobal import globalClock
+from panda3d.core import Vec2, Filename
 import os
 
 from engine.core.system import World
-from engine.core.components.transform_component import TransformComponent
+from engine.graphics.components.transform_component import TransformComponent
 from engine.graphics.components.sprite_component import SpriteComponent
 from engine.graphics.systems.render_system import RenderSystem
 from engine.input.components.input_component import InputComponent
@@ -36,8 +37,8 @@ class BasicSpriteDemo(ShowBase):
 
         # Create a static player entity
         player_entity = self.world.create_entity("player_static")
-        self.world.add_component(player_entity.id, 
-            TransformComponent(position=Vec2(0, 0), scale=Vec2(2, 2)))  # Make it larger
+        self.world.add_component(player_entity.id,
+            TransformComponent(x=0.0, y=0.0, scale_x=2.0, scale_y=2.0))
         self.world.add_component(player_entity.id, 
             SpriteComponent(image_path=player_sprite_path, layer=1))
         
@@ -81,13 +82,13 @@ class BasicSpriteDemo(ShowBase):
                 # In aspect2d, coordinates are normalized, so we need smaller movement values
                 move_speed = 1.0 * dt  # 1 unit per second (appropriate for aspect2d)
                 if input_comp.action_active.get("move_left", False):
-                    transform_comp.position.x -= move_speed
+                    transform_comp.x -= move_speed
                 if input_comp.action_active.get("move_right", False):
-                    transform_comp.position.x += move_speed
+                    transform_comp.x += move_speed
                 if input_comp.action_active.get("move_up", False):
-                    transform_comp.position.y += move_speed
+                    transform_comp.y += move_speed
                 if input_comp.action_active.get("move_down", False):
-                    transform_comp.position.y -= move_speed
+                    transform_comp.y -= move_speed
         
         return task.cont
 
