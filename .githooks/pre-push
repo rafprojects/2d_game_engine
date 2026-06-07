@@ -2,6 +2,6 @@
 set -e
 
 echo "Running unit tests before push..."
-python -m pytest tests/unit -q --tb=short
+/home/pointer/.virtualenvs/2d-game-engine/bin/python -m pytest tests/unit -q --tb=short
 
 echo "Tests passed."

@@ -20,6 +20,17 @@ Serialization rules
 Components are resolved on restore by ``"<module>:<qualname>"``. If a component
 class has moved or been renamed, register the replacement with
 :meth:`WorldSaveProvider.register_component`.
+
+Namespace restriction
+---------------------
+Only components whose module starts with ``engine.`` are resolved automatically.
+This is **intentional**: allowing arbitrary module imports from a save file would
+be a code-execution vector. Cartridge-defined components (e.g.
+``guardian_legends.components.*``) must be registered explicitly via
+:meth:`WorldSaveProvider.register_component` before calling :meth:`restore`;
+otherwise restore raises :class:`~engine.save_state.errors.SaveStateError`.
+To register all components in bulk at startup, call ``register_component`` for
+each class you expect to appear in save files.
 """
 
 from __future__ import annotations
@@ -80,9 +91,23 @@ class WorldSaveProvider:
                 f"Refusing to import module outside engine namespace: {module_name!r}. "
                 "Register a replacement via WorldSaveProvider.register_component()."
             )
-        obj: Any = importlib.import_module(module_name)
-        for part in qualname.split("."):
-            obj = getattr(obj, part)
+        try:
+            obj: Any = importlib.import_module(module_name)
+        except ModuleNotFoundError as exc:
+            raise SaveStateError(
+                f"Cannot restore component {key!r}: module {module_name!r} not found. "
+                "The component may have been moved or renamed. "
+                "Register a replacement via WorldSaveProvider.register_component()."
+            ) from exc
+        try:
+            for part in qualname.split("."):
+                obj = getattr(obj, part)
+        except AttributeError as exc:
+            raise SaveStateError(
+                f"Cannot restore component {key!r}: class {qualname!r} not found in "
+                f"module {module_name!r}. The component may have been renamed. "
+                "Register a replacement via WorldSaveProvider.register_component()."
+            ) from exc
         return obj
 
     # -- capture --------------------------------------------------------

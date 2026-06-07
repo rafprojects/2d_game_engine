@@ -13,4 +13,5 @@ __pycache__/
 # potentially sensitive files
 assets/music
 assets/soundfonts
+assets/sprites
 .copilot_guidelines.md
