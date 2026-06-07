@@ -4,6 +4,8 @@ Test script for the Movement Tweening System.
 This validates the tweening effects and integration.
 """
 
+import sys
+
 from panda3d.core import Vec2
 
 def test_basic_tweening():
@@ -216,6 +218,8 @@ def run_all_tests():
         print("\n🎉 All tweening tests passed!")
     else:
         print(f"\n❌ {failed} tests failed")
+
+    return failed == 0
 
 if __name__ == "__main__":
     success = run_all_tests()
