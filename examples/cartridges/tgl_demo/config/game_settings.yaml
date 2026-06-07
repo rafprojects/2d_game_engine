@@ -1,0 +1,49 @@
+player:
+  health: 3
+  lives: 3
+  speed: 1.2          # aspect2d units/sec
+  x_limit: 0.7
+  fire_rate: 0.4      # seconds between shots
+  max_shots: 5        # max bullets on screen at once
+  invulnerable_duration: 1.5
+
+bullet:
+  speed: 2.0
+  lifetime: 2.0
+
+spawner:
+  interval: 1.5
+  max_enemies: 4
+  spawn_y: 1.15
+  despawn_y: -1.2
+  enemy_x_range: 0.8
+  difficulty_ramp_interval: 20.0   # seconds between each difficulty step
+  difficulty_speed_delta: 0.08     # speed multiplier added per step
+  difficulty_spawn_delta: -0.15    # interval reduction per step (min 0.5s)
+  difficulty_max_enemies_cap: 8
+
+enemies:
+  patterns:
+    - name: straight
+      weight: 4
+      speed_multiplier: 1.0
+      point_value: 100
+    - name: sinusoidal
+      weight: 2
+      speed_multiplier: 0.8
+      point_value: 150
+    - name: diagonal_left
+      weight: 1
+      speed_multiplier: 1.1
+      point_value: 120
+    - name: diagonal_right
+      weight: 1
+      speed_multiplier: 1.1
+      point_value: 120
+
+starfield:
+  enabled: true
+  layer_1_count: 60
+  layer_1_speed: 0.08
+  layer_2_count: 35
+  layer_2_speed: 0.22
