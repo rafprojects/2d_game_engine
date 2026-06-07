@@ -56,6 +56,7 @@ class TGLDemo:
 
         # Load configuration
         cfg = _load_config()
+        self._invulnerable_duration = cfg["player"]["invulnerable_duration"]
 
         # --- Systems ---
         self._ship_ctrl = ShipControllerSystem(world, cfg["player"], cfg["bullet"])
@@ -157,7 +158,7 @@ class TGLDemo:
         if player_comp is None or player_comp.invulnerable_timer > 0 or player_comp.game_over:
             return
         player_comp.lives -= 1
-        player_comp.invulnerable_timer = INVULNERABILITY_DURATION
+        player_comp.invulnerable_timer = self._invulnerable_duration
         self._safe_destroy(enemy_id)
         if player_comp.lives <= 0:
             player_comp.game_over = True
