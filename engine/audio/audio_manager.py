@@ -1,5 +1,6 @@
 from typing import Dict, Optional, List
 from engine.audio.components.sound_component import SoundType
+from engine.audio.components.music_component import MusicComponent
 import os
 
 class AudioManager:
@@ -25,8 +26,6 @@ class AudioManager:
         
     def initialize_global_music_entity(self):
         """Create a global entity for music management."""
-        from engine.audio.components.music_component import MusicComponent
-        
         if not self.global_music_entity:
             self.global_music_entity = self.world.create_entity("global_music")
             music_comp = MusicComponent(

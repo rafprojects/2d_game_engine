@@ -25,7 +25,7 @@ classifiers = [
 ]
 keywords = ["game", "engine", "2d", "ecs", "panda3d", "gamedev"]
 dependencies = [
-    "panda3d>=1.10.14",
+    "panda3d>=1.10.14,<1.11",  # pinned to the tested 1.10 line; see PROJECT.md upgrade policy
     "jsonschema>=4.0.0",
     "msgpack>=1.0.0",
 ]

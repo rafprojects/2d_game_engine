@@ -18,6 +18,7 @@ from engine.input.input_bindings import InputBinding
 from engine.cartridge.loader import CartridgeLoader
 from engine.cartridge.errors import CartridgeError
 from engine.save_state.manager import SaveStateManager
+from engine.save_state.world_provider import WorldSaveProvider
 
 # Audio system imports
 try:
@@ -90,6 +91,9 @@ class Game(ShowBase):
         self.cartridge_loader = None
         self.cartridge_context = None
         self.save_state_manager = SaveStateManager(self.world, storage_root=Path("saves"))
+        # Built-in provider: persists ECS entities + component data out of the box.
+        # Cartridges may register additional providers under their own names.
+        self.save_state_manager.register_provider("world", WorldSaveProvider())
         if cartridge_path:
             loaded = self._load_cartridge(cartridge_path, extract_dir)
             if not loaded:
