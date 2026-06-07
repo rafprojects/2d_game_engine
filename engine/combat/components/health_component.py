@@ -3,6 +3,8 @@ Health Component
 
 Tracks an entity's current and maximum health along with optional invulnerability frames.
 """
+from __future__ import annotations
+
 from dataclasses import dataclass
 from engine.core.component import Component
 

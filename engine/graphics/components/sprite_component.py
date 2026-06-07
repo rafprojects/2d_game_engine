@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from panda3d.core import Vec4
 from engine.core.component import Component
 
