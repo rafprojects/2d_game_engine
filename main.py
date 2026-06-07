@@ -216,7 +216,10 @@ class Game(ShowBase):
                 save_state_manager=self.save_state_manager,
                 extract_root=extract_path,
             )
-            self.cartridge_context = self.cartridge_loader.load_archive(cartridge_path)
+            if Path(cartridge_path).is_dir():
+                self.cartridge_context = self.cartridge_loader.load_directory(cartridge_path)
+            else:
+                self.cartridge_context = self.cartridge_loader.load_archive(cartridge_path)
             print(f"🧩 Loaded cartridge '{self.cartridge_context.manifest.name}' v{self.cartridge_context.manifest.version}")
             return True
         except CartridgeError as exc:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from panda3d.core import CardMaker, NodePath, TransparencyAttrib, Texture, TextureStage
+from panda3d.core import CardMaker, NodePath, PandaNode, TransparencyAttrib, Texture, TextureStage
 
 from engine.core.system import System
 from engine.graphics.components.transform_component import TransformComponent
@@ -59,37 +59,80 @@ class RenderSystem(System):
                 return None
         return self.textures[image_path]
 
-    def _create_sprite_node(self, entity_id: uuid.UUID, image_path: str) -> NodePath | None:
-        """Create a sprite node with error checking and debug info"""
+    def _create_sprite_node(self, entity_id: uuid.UUID, image_path: str,
+                            sprite: SpriteComponent | None = None) -> NodePath | None:
+        """Create a sprite node. Delegates to .egg loader when path ends in .egg."""
+        if image_path and image_path.lower().endswith('.egg'):
+            return self._create_egg_sprite_node(entity_id, image_path, sprite)
+
         if not image_path:
-            # Create a colored rectangle when no image path is provided
             cm = CardMaker(f'{entity_id}_sprite_card')
-            cm.setFrame(-0.5, 0.5, -0.5, 0.5)  # Centered at origin
+            cm.setFrame(-0.5, 0.5, -0.5, 0.5)
             node = NodePath(cm.generate())
             node.setTransparency(TransparencyAttrib.MAlpha)
-            node.setColor(1, 1, 1, 1)  # Default color, will be overridden by sprite.color
+            node.setColor(1, 1, 1, 1)
             node.reparentTo(self.aspect2d)
-            
             print(f"Created colored rectangle sprite node for entity {entity_id}")
             return node
-            
+
         texture = self._load_texture(image_path)
         if texture:
             cm = CardMaker(f'{entity_id}_sprite_card')
-            cm.setFrame(-0.5, 0.5, -0.5, 0.5)  # Centered at origin
+            cm.setFrame(-0.5, 0.5, -0.5, 0.5)
             node = NodePath(cm.generate())
             node.setTexture(texture)
             node.setTransparency(TransparencyAttrib.MAlpha)
-            node.setColor(1, 1, 1, 1)  # Ensure full opacity and color by default
+            node.setColor(1, 1, 1, 1)
             node.reparentTo(self.aspect2d)
-            
-            # Debug information
             print(f"Created sprite node for entity {entity_id}: texture {texture.getXSize()}x{texture.getYSize()}")
-            
             return node
         else:
             print(f"Error: Failed to create sprite node for entity {entity_id} - texture loading failed")
             return None
+
+    def _create_egg_sprite_node(self, entity_id: uuid.UUID, image_path: str,
+                                sprite: SpriteComponent | None) -> NodePath | None:
+        """Load a Panda3D .egg model as a sprite and wire up its SequenceNode."""
+        try:
+            model = self.loader.loadModel(image_path)
+        except Exception as e:
+            print(f"Error loading .egg model {image_path}: {e}")
+            return None
+
+        if model is None or model.isEmpty():
+            print(f"Error: Could not load .egg model: {image_path}")
+            return None
+
+        # Set nearest-neighbour filtering on all embedded textures for pixel-art look
+        for tex in model.findAllTextures():
+            tex.setMagfilter(Texture.FTNearest)
+            tex.setMinfilter(Texture.FTNearest)
+
+        # Normalise the model to a 1×1 unit card so _update_node_transform
+        # applies the same base_scale as CardMaker-based sprites.
+        bounds = model.getTightBounds()
+        if bounds:
+            min_pt, max_pt = bounds
+            extent_x = max_pt.x - min_pt.x
+            extent_z = max_pt.z - min_pt.z
+            max_extent = max(extent_x, extent_z)
+            if max_extent > 0:
+                model.setScale(1.0 / max_extent)
+
+        # Create a named parent so cleanup logic (which searches for _sprite_card) works.
+        parent = self.aspect2d.attachNewNode(f'{entity_id}_sprite_card')
+        parent.setTransparency(TransparencyAttrib.MAlpha)
+        model.reparentTo(parent)
+
+        # Find the SequenceNode and store it on the SpriteComponent.
+        if sprite is not None:
+            seq_path = model.find('**/+SequenceNode')
+            if not seq_path.isEmpty():
+                sprite._egg_sequence_node = seq_path.node()
+                print(f"Found SequenceNode in {image_path} ({seq_path.node().getNumFrames()} frames)")
+
+        print(f"Created .egg sprite node for entity {entity_id}: {image_path}")
+        return parent
         
     def _apply_animation_frame(self, node: NodePath, frame: 'SpriteFrame', flip_x: bool = False, flip_y: bool = False):
         """Apply a sprite animation frame's UV coordinates to the given node."""
@@ -208,24 +251,23 @@ class RenderSystem(System):
             # Create node if it doesn't exist yet
             if sprite.panda_node is None:
                 if sprite.image_path or (sprite.image_path is None and sprite.sprite_sheet is None):
-                    sprite.panda_node = self._create_sprite_node(entity.id, sprite.image_path)
+                    sprite.panda_node = self._create_sprite_node(entity.id, sprite.image_path, sprite)
                     if sprite.panda_node:
                         print(f"✅ Created sprite node for entity {entity.id}")
                     else:
                         print(f"❌ Failed to create sprite node for entity {entity.id}")
-            
+
             # Update transform and appearance
             if sprite.panda_node:
                 self._update_node_transform(sprite.panda_node, transform, sprite)
-                
-                # Handle animation if sprite has a sprite sheet and animation
-                if sprite.sprite_sheet and sprite.is_playing:
+
+                # UV sprite-sheet animation (skip for .egg — SequenceNode manages its own timing)
+                if sprite._egg_sequence_node is None and sprite.sprite_sheet and sprite.is_playing:
                     sprite.update_animation(dt)
                     current_frame = sprite.get_current_frame()
                     if current_frame:
                         self._apply_animation_frame(sprite.panda_node, current_frame)
             else:
-                # If node creation failed, ensure panda_node is None
                 sprite.panda_node = None
 
         self._cleanup_stale_nodes(current_sprite_entity_ids)

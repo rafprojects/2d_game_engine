@@ -53,6 +53,59 @@ class CartridgeLoader:
         self._manifest_schema: Optional[Dict[str, Any]] = None
         self._validator: Optional[Draft202012Validator] = None
 
+    def load_directory(self, directory_path: str | os.PathLike[str]) -> LoadedCartridge:
+        """Load a cartridge from an unpacked directory (dev mode — no ZIP required)."""
+        directory_path = Path(directory_path)
+        if not directory_path.is_dir():
+            raise CartridgeLoadError(f"Cartridge directory not found: {directory_path}")
+
+        manifest_file = directory_path / "config" / "cartridge.json"
+        try:
+            with manifest_file.open() as fp:
+                manifest_data = json.load(fp)
+        except FileNotFoundError as exc:
+            raise CartridgeValidationError("config/cartridge.json missing from cartridge directory") from exc
+        except json.JSONDecodeError as exc:
+            raise CartridgeValidationError(f"Invalid JSON in config/cartridge.json: {exc}") from exc
+
+        self._validate_manifest(manifest_data)
+        try:
+            manifest = CartridgeManifest.from_dict(manifest_data)
+        except ValueError as exc:
+            raise CartridgeValidationError(str(exc)) from exc
+
+        python_path = directory_path / manifest.python_path
+        if python_path.exists() and python_path.is_dir():
+            path_str = str(python_path)
+            if path_str not in sys.path:
+                sys.path.insert(0, path_str)
+
+        # Assets are optional in directory mode — sprites may be served from CWD.
+        assets_path = directory_path / manifest.assets.mount_path
+        if assets_path.exists():
+            self._mount_assets(assets_path)
+
+        if self.save_state_manager:
+            self.save_state_manager.attach_manifest(manifest)
+
+        entry_instance = self._instantiate_entrypoint(manifest)
+        if self.save_state_manager:
+            setattr(entry_instance, "save_state_manager", self.save_state_manager)
+        self._run_entry_hook(entry_instance, manifest)
+        loaded_modules = self._register_system_modules(manifest)
+
+        context = LoadedCartridge(
+            manifest=manifest,
+            archive_path=directory_path,
+            extract_path=directory_path,
+            entry_instance=entry_instance,
+            system_modules=loaded_modules,
+            save_state_manager=self.save_state_manager,
+        )
+
+        self.loaded[manifest.name] = context
+        return context
+
     def load_archive(self, archive_path: str | os.PathLike[str]) -> LoadedCartridge:
         archive_path = Path(archive_path)
         if not archive_path.exists():
