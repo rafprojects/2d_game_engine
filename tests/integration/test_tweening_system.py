@@ -4,12 +4,7 @@ Test script for the Movement Tweening System.
 This validates the tweening effects and integration.
 """
 
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from panda3d.core import Vec2
-import time
 
 def test_basic_tweening():
     """Test basic tweening functionality."""
@@ -72,14 +67,11 @@ def test_basic_tweening():
             print(f"  Step {i+1}: position = ({pos.x:.2f}, {pos.y:.2f})")
         
         print("✅ Vector tweening working correctly")
-        
-        return True
-        
+
     except Exception as e:
-        print(f"❌ Tweening test failed: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        raise
 
 def test_movement_tweening():
     """Test movement tweening component."""
@@ -137,14 +129,11 @@ def test_movement_tweening():
             print(f"  Step {i+1}: scale=({scale.x:.3f}, {scale.y:.3f})")
         
         print("✅ Movement effects working correctly")
-        
-        return True
-        
+
     except Exception as e:
-        print(f"❌ Movement tweening test failed: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        raise
 
 def test_integration():
     """Test integration with movement system."""
@@ -153,7 +142,7 @@ def test_integration():
     
     try:
         from engine.core.system import World
-        from engine.core.components.transform_component import TransformComponent
+        from engine.graphics.components.transform_component import TransformComponent
         from engine.core.components.movement_component import MovementComponent
         from engine.core.systems.movement_system import MovementSystem
         from engine.animation.movement_tweening import MovementTweenComponent
@@ -165,10 +154,10 @@ def test_integration():
         # Create entity with all components
         entity = world.create_entity("tweening_test")
         
-        transform = TransformComponent(position=Vec2(0, 0), scale=Vec2(1, 1))
+        transform = TransformComponent(x=0.0, y=0.0, scale_x=1.0, scale_y=1.0)
         movement = MovementComponent(base_speed=2.0)
         tween_comp = MovementTweenComponent()
-        tween_comp.set_base_transform(transform.position, transform.scale, transform.rotation)
+        tween_comp.set_base_transform(Vec2(transform.x, transform.y), Vec2(transform.scale_x, transform.scale_y), transform.rotation)
         
         world.add_component(entity.id, transform)
         world.add_component(entity.id, movement)
@@ -179,7 +168,7 @@ def test_integration():
         # Test movement with tweening
         movement.set_target_direction(Vec2(1, 0))  # Move right
         
-        initial_pos = transform.position.x
+        initial_pos = transform.x
         dt = 0.016  # 60 FPS
         
         for i in range(30):  # Half second
@@ -191,16 +180,13 @@ def test_integration():
                       f"visual=({tween_comp.visual_position.x:.2f}, {tween_comp.visual_position.y:.2f}), "
                       f"scale=({tween_comp.visual_scale.x:.3f}, {tween_comp.visual_scale.y:.3f})")
         
-        final_pos = transform.position.x
+        final_pos = transform.x
         print(f"✅ Movement with tweening: {initial_pos:.3f} → {final_pos:.3f}")
-        
-        return True
-        
+
     except Exception as e:
-        print(f"❌ Integration test failed: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        raise
 
 def run_all_tests():
     """Run all tweening tests."""
@@ -213,40 +199,23 @@ def run_all_tests():
     ]
     
     passed = 0
+    failed = 0
     for test in tests:
         try:
-            if test():
-                passed += 1
-            print()  # Add spacing between tests
+            test()
+            passed += 1
+            print()
         except Exception as e:
             print(f"❌ Test failed with exception: {e}")
+            failed += 1
             print()
-    
+
     print(f"📊 Results: {passed}/{len(tests)} tests passed")
-    
-    if passed == len(tests):
+
+    if failed == 0:
         print("\n🎉 All tweening tests passed!")
-        print("\nTweening System Features:")
-        print("  ✅ Multiple easing functions (linear, cubic, bounce, elastic, etc.)")
-        print("  ✅ Tween manager for coordinating animations")
-        print("  ✅ Vector and scalar value tweening")
-        print("  ✅ Movement-specific visual effects")
-        print("  ✅ Configurable presets (snappy, smooth, bouncy, elastic)")
-        print("  ✅ Position smoothing and lag effects")
-        print("  ✅ Scale and rotation effects during movement")
-        print("  ✅ Integration with existing movement system")
-        print("  ✅ Optional tweening (graceful degradation)")
-        
-        print("\nUsage Tips:")
-        print("  🎯 Use 'snappy' preset for responsive games")
-        print("  🌊 Use 'smooth' preset for casual/relaxing games")
-        print("  🏀 Use 'bouncy' preset for playful/cartoon games")
-        print("  🎯 Use 'elastic' preset for juicy/polished feel")
-        
-        return True
     else:
-        print(f"\n❌ {len(tests) - passed} tests failed")
-        return False
+        print(f"\n❌ {failed} tests failed")
 
 if __name__ == "__main__":
     success = run_all_tests()

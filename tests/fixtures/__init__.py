@@ -106,7 +106,7 @@ def create_test_world():
 
 def create_test_entity(world, name="test_entity"):
     """Create a test entity with common components."""
-    from engine.core.components.transform_component import TransformComponent
+    from engine.graphics.components.transform_component import TransformComponent
     entity = world.create_entity(name)
     world.add_component(entity.id, TransformComponent())
     return entity

@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional, Type
 
 from engine.core.entity import Entity
 from engine.core.events import EntityCreatedEvent
+from engine.save_state.errors import SaveStateError
 
 _PRIMITIVE_TYPES = (type(None), bool, int, float, str)
 
@@ -74,6 +75,11 @@ class WorldSaveProvider:
         if key in self._registry:
             return self._registry[key]
         module_name, _, qualname = key.partition(":")
+        if not module_name.startswith("engine."):
+            raise SaveStateError(
+                f"Refusing to import module outside engine namespace: {module_name!r}. "
+                "Register a replacement via WorldSaveProvider.register_component()."
+            )
         obj: Any = importlib.import_module(module_name)
         for part in qualname.split("."):
             obj = getattr(obj, part)
@@ -145,8 +151,11 @@ class WorldSaveProvider:
             kwargs = {key: val for key, val in data.items() if key in field_names}
             try:
                 return component_type(**kwargs)
-            except TypeError:
-                pass
+            except TypeError as exc:
+                raise SaveStateError(
+                    f"Failed to construct {component_type.__qualname__}: {exc}. "
+                    "Save data may be incompatible with the current component definition."
+                ) from exc
         instance = object.__new__(component_type)  # type: ignore[misc]
         for key, value in data.items():
             setattr(instance, key, value)

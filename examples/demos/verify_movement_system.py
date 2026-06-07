@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from panda3d.core import Vec2
 from engine.core.system import World
-from engine.core.components.transform_component import TransformComponent
+from engine.graphics.components.transform_component import TransformComponent
 from engine.core.components.movement_component import MovementComponent
 from engine.core.systems.movement_system import MovementSystem
 
@@ -28,7 +28,7 @@ def demonstrate_movement_system():
     entity = world.create_entity("demo_player")
     
     # Add components
-    transform = TransformComponent(position=Vec2(0, 0), scale=Vec2(1, 1))
+    transform = TransformComponent(x=0.0, y=0.0, scale_x=1.0, scale_y=1.0)
     movement = MovementComponent(
         base_speed=2.0,
         acceleration=8.0,
@@ -50,12 +50,13 @@ def demonstrate_movement_system():
     dt = 0.016  # 60 FPS
     for i in range(30):  # Half second of movement
         movement.update_velocity(dt)
-        transform.position += movement.current_velocity * dt
-        
+        transform.x += movement.current_velocity.x * dt
+        transform.y += movement.current_velocity.y * dt
+
         if i % 10 == 0:  # Print every 10 frames
-            print(f"   Frame {i:2d}: pos={transform.position.x:.3f}, velocity={movement.current_velocity.x:.3f}")
-    
-    print(f"✅ Entity moved from 0.000 to {transform.position.x:.3f}")
+            print(f"   Frame {i:2d}: pos={transform.x:.3f}, velocity={movement.current_velocity.x:.3f}")
+
+    print(f"✅ Entity moved from 0.000 to {transform.x:.3f}")
     
     # Demonstrate speed effects
     print("\n⚡ Testing Speed Effects")

@@ -7,10 +7,6 @@ Tests the asset pipeline components working together with the ECS system.
 import unittest
 import tempfile
 import os
-import sys
-
-# Add the parent directory to the path so we can import engine modules
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 
 from engine.core.system import World
 from engine.assets.resource_manager import ResourceManager, AssetType

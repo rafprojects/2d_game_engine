@@ -5,22 +5,13 @@ This validates the robust movement system with dynamic speed effects.
 """
 
 import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from panda3d.core import Vec2
-import time
 
-# Test imports
-try:
-    from engine.core.components.movement_component import MovementComponent
-    from engine.core.systems.movement_system import MovementSystem
-    from engine.core.components.transform_component import TransformComponent
-    from engine.core.system import World
-    print("✅ All movement system imports successful")
-except ImportError as e:
-    print(f"❌ Import error: {e}")
-    sys.exit(1)
+from engine.core.components.movement_component import MovementComponent
+from engine.core.systems.movement_system import MovementSystem
+from engine.graphics.components.transform_component import TransformComponent
+from engine.core.system import World
 
 def test_movement_component():
     """Test MovementComponent functionality."""
@@ -91,7 +82,7 @@ def test_movement_system():
     
     # Create test entity
     entity = world.create_entity("test_entity")
-    world.add_component(entity.id, TransformComponent(position=Vec2(0, 0)))
+    world.add_component(entity.id, TransformComponent(x=0.0, y=0.0))
     world.add_component(entity.id, MovementComponent(base_speed=1.0))
     
     # Test system can find entities
@@ -123,7 +114,7 @@ def test_integration():
     
     # Create entity with movement
     entity = world.create_entity("integration_test")
-    transform = TransformComponent(position=Vec2(0, 0))
+    transform = TransformComponent(x=0.0, y=0.0)
     movement = MovementComponent(base_speed=2.0, acceleration=10.0)
     
     world.add_component(entity.id, transform)
@@ -133,14 +124,14 @@ def test_integration():
     movement.set_target_direction(Vec2(1, 0))  # Move right
     
     # Simulate several update frames
-    initial_pos = transform.position.x
+    initial_pos = transform.x
     dt = 0.016  # ~60 FPS
     
     for frame in range(10):
         movement_system.update(dt)
     
     # Entity should have moved right
-    final_pos = transform.position.x
+    final_pos = transform.x
     assert final_pos > initial_pos
     print(f"✅ Entity moved from x={initial_pos:.3f} to x={final_pos:.3f}")
     
@@ -151,7 +142,7 @@ def test_integration():
     for frame in range(10):
         movement_system.update(dt)
     
-    pos_after_boost = transform.position.x
+    pos_after_boost = transform.x
     distance_normal = final_pos - initial_pos
     distance_boosted = pos_after_boost - pos_before_boost
     

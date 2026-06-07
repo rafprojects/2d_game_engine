@@ -5,6 +5,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .vscode/
+.claude/
 
 # old stuff for reference
 .reference 
