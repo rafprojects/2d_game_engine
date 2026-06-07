@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import os
+import pathlib
 
+import yaml
 from panda3d.core import CardMaker, NodePath, TransparencyAttrib, Vec2, Vec4
 
 from engine.core.system import World
@@ -21,6 +23,7 @@ from tgl.components.enemy_component import EnemyComponent
 from tgl.components.player_component import PlayerComponent
 from tgl.systems.hud_system import HUDSystem
 from tgl.systems.ship_controller import ShipControllerSystem
+from tgl.systems.starfield_system import StarfieldSystem
 from tgl.systems.wave_spawner import WaveSpawnerSystem
 
 # Collision layers
@@ -31,8 +34,13 @@ LAYER_BULLET = 4
 # Player collides with enemies only
 PLAYER_COLLISION_MASK = 1 << (LAYER_ENEMY - 1)  # = 2
 
-INVULNERABILITY_DURATION = 1.5   # seconds after player is hit
 PLAYER_START_Y = -0.7
+
+
+def _load_config() -> dict:
+    root = pathlib.Path(__file__).parent.parent.parent  # tgl_demo/
+    with open(root / "config" / "game_settings.yaml") as f:
+        return yaml.safe_load(f)
 
 
 def _ship_sprite_path() -> str:
@@ -46,9 +54,13 @@ class TGLDemo:
         self.world = world
         self.base = base
 
+        # Load configuration
+        cfg = _load_config()
+
         # --- Systems ---
-        self._ship_ctrl = ShipControllerSystem(world)
-        self._wave_spawner = WaveSpawnerSystem(world)
+        self._ship_ctrl = ShipControllerSystem(world, cfg["player"], cfg["bullet"])
+        self._wave_spawner = WaveSpawnerSystem(world, cfg)
+        self._starfield = StarfieldSystem(world, base, cfg["starfield"])
         self._collision = CollisionSystem(world)
         self._projectile = ProjectileSystem(world)
         self._render = RenderSystem(world, base)
@@ -58,6 +70,7 @@ class TGLDemo:
         world.add_system(self._input)
         world.add_system(self._ship_ctrl)
         world.add_system(self._wave_spawner)
+        world.add_system(self._starfield)
         world.add_system(self._projectile)
         world.add_system(self._collision)
         world.add_system(self._render)
@@ -76,7 +89,11 @@ class TGLDemo:
             layer=3,
             egg_animation_ranges={"idle": (0, 1), "left": (2, 3), "right": (4, 5)},
         ))
-        world.add_component(player.id, PlayerComponent(health=3, lives=3, score=0))
+        world.add_component(player.id, PlayerComponent(
+            health=cfg["player"]["health"],
+            lives=cfg["player"]["lives"],
+            score=0
+        ))
         world.add_component(player.id, ColliderComponent(
             collider_type=ColliderType.RECTANGLE,
             size=Vec2(0.12, 0.14),
