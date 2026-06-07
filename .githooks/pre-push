@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -e
+
+echo "Running unit tests before push..."
+python -m pytest tests/unit -q --tb=short
+
+echo "Tests passed."
