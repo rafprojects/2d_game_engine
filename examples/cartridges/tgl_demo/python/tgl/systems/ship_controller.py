@@ -35,7 +35,10 @@ class ShipControllerSystem(System):
         super().__init__(world)
         self._player_entity_id: uuid.UUID | None = None
         self._speed = cfg_player["speed"]
+        self._vertical_speed = cfg_player.get("vertical_speed", cfg_player["speed"])
         self._x_limit = cfg_player["x_limit"]
+        self._y_min = cfg_player.get("y_min", -0.95)
+        self._y_max = cfg_player.get("y_max", 0.8)
         self._fire_rate = cfg_player["fire_rate"]
         self._max_shots = cfg_player["max_shots"]
         self._bullet_speed = cfg_bullet["speed"]
@@ -77,6 +80,16 @@ class ShipControllerSystem(System):
         if moving_right:
             dx += self._speed * dt
         transform.x = max(-self._x_limit, min(self._x_limit, transform.x + dx))
+
+        # Vertical movement
+        moving_up = input_comp.action_active.get("move_up", False)
+        moving_down = input_comp.action_active.get("move_down", False)
+        dy = 0.0
+        if moving_up:
+            dy += self._vertical_speed * dt
+        if moving_down:
+            dy -= self._vertical_speed * dt
+        transform.y = max(self._y_min, min(self._y_max, transform.y + dy))
 
         # Animation state
         if sprite is not None:

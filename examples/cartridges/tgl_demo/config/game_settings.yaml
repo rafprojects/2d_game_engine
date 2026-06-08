@@ -1,28 +1,55 @@
+# Coordinate system: Panda3D aspect2d
+#
+# aspect2d is a viewport-normalized coordinate space where:
+#   Y always spans -1.0 to +1.0  (2.0 units = full window height)
+#   X spans -(width/height) to +(width/height)  (proportional to aspect ratio)
+#
+# 1 unit = window_height / 2 pixels  (same scale on both axes — isotropic)
+#
+# At the configured 512×480 window:
+#   1 unit = 240 pixels
+#   X spans -1.067 to +1.067  (= ±512/480)
+#   Y spans -1.0   to +1.0
+#
+# To rescale the game, change window.width and window.height.
+# All viewport-unit values below remain valid as long as aspect ratio stays close to 1.067.
+
+window:
+  width: 512    # pixels (2× NES horizontal: 256×2)
+  height: 480   # pixels (2× NES vertical: 240×2)
+  # 1 unit = 240 pixels at this resolution
+  # X bounds: ±1.067,  Y bounds: ±1.0
+
 player:
-  health: 3
-  lives: 3
-  speed: 1.2          # aspect2d units/sec
-  x_limit: 0.7
-  fire_rate: 0.4      # seconds between shots
-  max_shots: 5        # max bullets on screen at once
-  invulnerable_duration: 1.5
+  health: 3           # hit points per life
+  lives: 3            # starting lives
+  speed: 1.2          # horizontal movement speed (units/sec; 288 px/sec at 512×480)
+  vertical_speed: 1.2 # vertical movement speed (units/sec)
+  x_limit: 0.95       # distance from center to left/right wall (units; viewport X = ±1.067)
+  y_min: -0.88        # bottom movement boundary (units; viewport Y = -1.0)
+  y_max: 0.75         # top movement boundary (units; leaves ~60px for HUD)
+  fire_rate: 0.4      # minimum delay between shots (seconds)
+  max_shots: 5        # maximum simultaneous projectiles on screen
+  invulnerable_duration: 1.5  # post-hit invulnerability duration (seconds)
 
 bullet:
-  speed: 2.0
-  lifetime: 2.0
+  speed: 2.0    # projectile speed (units/sec; 480 px/sec at 512×480)
+  lifetime: 2.0 # seconds before auto-despawn
 
 spawner:
-  interval: 1.5
-  max_enemies: 4
-  spawn_y: 1.15
-  despawn_y: -1.2
-  enemy_x_range: 0.8
-  difficulty_ramp_interval: 20.0   # seconds between each difficulty step
-  difficulty_speed_delta: 0.08     # speed multiplier added per step
-  difficulty_spawn_delta: -0.15    # interval reduction per step (min 0.5s)
-  difficulty_max_enemies_cap: 8
+  interval: 1.5          # base time between spawns (seconds)
+  max_enemies: 4         # starting concurrent enemy cap
+  spawn_y: 1.1           # Y position enemies spawn at (units, just above top edge)
+  despawn_y: -1.1        # Y position enemies are removed at (units, just below bottom edge)
+  enemy_x_range: 0.9     # enemies spawn at random X in [-range, +range] (units)
+  difficulty_ramp_interval: 20.0  # seconds between difficulty steps
+  difficulty_speed_delta: 0.08    # speed multiplier increase per step (unitless)
+  difficulty_spawn_delta: -0.15   # spawn interval reduction per step (seconds; clamped at 0.5)
+  difficulty_max_enemies_cap: 8   # maximum concurrent enemies at peak difficulty
 
 enemies:
+  scale: 0.8          # sprite scale (1.0 = original asset size)
+  collider_size: 0.18 # square collision box half-size... actually full size (units)
   patterns:
     - name: straight
       weight: 4

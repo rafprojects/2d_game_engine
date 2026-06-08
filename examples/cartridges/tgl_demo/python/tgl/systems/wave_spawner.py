@@ -40,6 +40,8 @@ class WaveSpawnerSystem(System):
         self._spawn_y = sp["spawn_y"]
         self._x_range = sp["enemy_x_range"]
         self._patterns = cfg["enemies"]["patterns"]
+        self._enemy_scale = cfg["enemies"].get("scale", 0.8)
+        self._collider_size = cfg["enemies"].get("collider_size", 0.18)
         self._spawn_timer: float = 0.0
         self._elapsed: float = 0.0
         self._game_over: bool = False
@@ -111,7 +113,7 @@ class WaveSpawnerSystem(System):
         speed = speed_base * pattern["speed_multiplier"] * (1 + step * self._speed_delta)
 
         enemy = self.world.create_entity("enemy")
-        self.world.add_component(enemy.id, TransformComponent(x=x, y=self._spawn_y, scale_x=0.8, scale_y=0.8))
+        self.world.add_component(enemy.id, TransformComponent(x=x, y=self._spawn_y, scale_x=self._enemy_scale, scale_y=self._enemy_scale))
         self.world.add_component(enemy.id, SpriteComponent(image_path=_asteroid_sprite_path(), layer=1))
         self.world.add_component(enemy.id, EnemyComponent(
             point_value=pattern["point_value"],
@@ -120,7 +122,7 @@ class WaveSpawnerSystem(System):
         ))
         self.world.add_component(enemy.id, ColliderComponent(
             collider_type=ColliderType.RECTANGLE,
-            size=Vec2(0.18, 0.18),
+            size=Vec2(self._collider_size, self._collider_size),
             is_trigger=True,
             collision_layer=LAYER_ENEMY,
             collision_mask=ENEMY_COLLISION_MASK,

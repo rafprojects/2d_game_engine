@@ -5,7 +5,7 @@ import os
 import pathlib
 
 import yaml
-from panda3d.core import CardMaker, NodePath, TransparencyAttrib, Vec2, Vec4
+from panda3d.core import CardMaker, NodePath, TransparencyAttrib, Vec2, Vec4, WindowProperties
 
 from engine.core.system import World
 from engine.graphics.components.transform_component import TransformComponent
@@ -58,10 +58,17 @@ class TGLDemo:
         cfg = _load_config()
         self._invulnerable_duration = cfg["player"]["invulnerable_duration"]
 
+        # Apply window size and compute viewport aspect ratio
+        win_cfg = cfg["window"]
+        props = WindowProperties()
+        props.setSize(win_cfg["width"], win_cfg["height"])
+        base.win.requestProperties(props)
+        self._aspect = win_cfg["width"] / win_cfg["height"]  # X spans ±aspect, Y spans ±1.0
+
         # --- Systems ---
         self._ship_ctrl = ShipControllerSystem(world, cfg["player"], cfg["bullet"])
         self._wave_spawner = WaveSpawnerSystem(world, cfg)
-        self._starfield = StarfieldSystem(world, base, cfg["starfield"])
+        self._starfield = StarfieldSystem(world, base, cfg["starfield"], self._aspect)
         self._collision = CollisionSystem(world)
         self._projectile = ProjectileSystem(world)
         self._render = RenderSystem(world, base)
@@ -77,8 +84,8 @@ class TGLDemo:
         world.add_system(self._render)
         world.add_system(self._hud)
 
-        # --- Background (solid dark rectangle) ---
-        self._create_background(base)
+        # --- Background (solid dark rectangle, fills full viewport) ---
+        self._create_background(base, self._aspect)
 
         # --- Player entity ---
         player = world.create_entity("player")
@@ -171,9 +178,9 @@ class TGLDemo:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _create_background(self, base):
+    def _create_background(self, base, aspect: float):
         cm = CardMaker("tgl_background")
-        cm.setFrame(-1.4, 1.4, -1.1, 1.1)
+        cm.setFrame(-aspect, aspect, -1.0, 1.0)
         bg = NodePath(cm.generate())
         bg.setColor(Vec4(0.02, 0.02, 0.06, 1.0))
         bg.reparentTo(base.aspect2d)
@@ -190,8 +197,15 @@ def _player_bindings() -> dict:
             InputBinding(input_type="key", event_name="arrow_right"),
             InputBinding(input_type="key", event_name="d"),
         ],
+        "move_up": [
+            InputBinding(input_type="key", event_name="arrow_up"),
+            InputBinding(input_type="key", event_name="w"),
+        ],
+        "move_down": [
+            InputBinding(input_type="key", event_name="arrow_down"),
+            InputBinding(input_type="key", event_name="s"),
+        ],
         "shoot": [
             InputBinding(input_type="key", event_name="space"),
-            InputBinding(input_type="key", event_name="arrow_up"),
         ],
     }

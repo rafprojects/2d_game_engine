@@ -11,10 +11,13 @@ from engine.core.system import System
 class StarfieldSystem(System):
     """Two-layer parallax starfield using CardMaker quads."""
 
-    def __init__(self, world, base, cfg: dict):
+    def __init__(self, world, base, cfg: dict, aspect: float):
         super().__init__(world)
         self._base = base
         self._stars = []
+        # aspect2d bounds: X = ±aspect, Y = ±1.0
+        self._x_half = aspect
+        self._y_half = 1.0
 
         if not cfg.get("enabled", True):
             return
@@ -24,8 +27,8 @@ class StarfieldSystem(System):
 
     def _create_layer(self, count: int, speed: float, size: float, alpha: float):
         for _ in range(count):
-            x = random.uniform(-1.4, 1.4)
-            y = random.uniform(-1.1, 1.1)
+            x = random.uniform(-self._x_half, self._x_half)
+            y = random.uniform(-self._y_half, self._y_half)
             cm = CardMaker(f"star_{len(self._stars)}")
             cm.setFrame(-size / 2, size / 2, -size / 2, size / 2)
             star_np = self._base.aspect2d.attachNewNode(cm.generate())
@@ -37,8 +40,8 @@ class StarfieldSystem(System):
     def update(self, dt: float):
         for i, (star_np, x, y, speed) in enumerate(self._stars):
             y -= speed * dt
-            if y < -1.2:
-                y = 1.2
+            if y < -self._y_half - 0.05:
+                y = self._y_half + 0.05
             star_np.setPos(x, 0, y)
             self._stars[i] = (star_np, x, y, speed)
 
