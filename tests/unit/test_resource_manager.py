@@ -80,3 +80,31 @@ def test_layered_mount_falls_back_to_base(tmp_path):
     assert data is not None
     assert data["present"] == "base_only"
     assert manager.asset_root == _normalized(base_dir)
+
+
+def test_resolve_asset_path_prefers_overlay(tmp_path):
+    """New coverage for the public resolve hook used by RenderSystem (P1-A).
+
+    Cartridge mounts (prepended) must win for relative paths, matching the
+    contract used by load_asset and now by sprite/egg loading in RenderSystem.
+    """
+    base_dir = tmp_path / "base"
+    overlay_dir = tmp_path / "overlay"
+    _write_json(base_dir / "shared" / "data.json", {"source": "base"})
+    _write_json(overlay_dir / "shared" / "data.json", {"source": "overlay"})
+
+    manager = _build_resource_manager(base_dir)
+    manager.mount_asset_root(str(overlay_dir))
+
+    resolved = manager.resolve_asset_path("shared/data.json")
+    assert resolved is not None
+    assert "overlay" in resolved, f"expected overlay to win, got {resolved}"
+
+    # Nonexistent falls back to None (no error)
+    assert manager.resolve_asset_path("does/not/exist.png") is None
+
+    # After unmount, base wins again
+    manager.unmount_asset_root(str(overlay_dir))
+    resolved_base = manager.resolve_asset_path("shared/data.json")
+    assert resolved_base is not None
+    assert "base" in resolved_base

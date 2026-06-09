@@ -1,0 +1,349 @@
+# Phase 1 - Cartridge System Polish
+
+**Status:** In Progress (P1-A complete)  
+**Created:** 2026-06  
+**Last updated:** 2026-06 (P1-A implemented + verified per /workon-phase 1)
+
+### Tracks
+
+| Track | Description | Status | Effort |
+|-------|-------------|--------|--------|
+| P1-A | Asset loading consistency (RenderSystem + other direct Panda loads route through ResourceManager so cartridge `assets/` mounts take priority) | Complete ✅ | Large (critical) |
+| P1-B | Loader lifecycle & isolation (unload/teardown hooks, sys.path or importlib hygiene, explicit cartridge removal) | Complete ✅ | Medium |
+| P1-C | CartridgeContext / EngineAPI facade (replace raw `(world, base, manifest)` hand-offs in hooks and register) | Planned | Medium |
+| P1-D | Authoring & scaffolding tooling (`py2d-cartridge init` / new-cartridge command; align `project_gen`; update CLI surface and packaging) | Planned | Medium |
+| P1-E | Documentation & narrative leadership (README, DEVELOPER_ONBOARDING, PROJECT_ORGANIZATION lead with cartridges as primary model; elevate + cross-link existing guides) | Planned | Small-Medium |
+| P1-F | Manifest completeness & enforcement (engine version requirement checking at load; minor schema/loader sync) | Planned | Small |
+| P1-G | Reference Cartridge Validation (tgl_demo as the canonical proof point exercising directory mode, archive pack/load, save providers, hot-restart UX, CollisionLayer, config, dev integration) | Partial (prior work) / In Progress | Medium |
+
+---
+
+## Rationale
+
+Briefly explain why this phase exists now.
+
+1. The cartridge model (self-contained code + assets + metadata units that plug into a stable engine via loader, entry hooks, asset overlay, system registration, and SaveStateProvider) is already substantially implemented and was exercised/extended by the tgl_demo work. However, several "last mile" consistency, DX, and isolation gaps (documented in the CARTRIDGE_ARCHITECTURE_VISION_AND_AUDIT.md and the earlier vision feasibility plan) prevent cartridges from being the *primary, opinionated, and reliably documented* way to build and ship games.
+2. These items belong together as one phase because they are the minimal set of system-level polish required to make the existing architecture "just work" for cartridge authors (asset fidelity, clean lifecycle, clean API surface, good tooling, honest docs) before investing in the more novel parts of the vision (retro emergent mechanics layer, native plugins).
+3. Success looks like: an external developer (or reviewer) can `py2d-cartridge init` (or equivalent), implement a small cartridge, package it, run it via the launcher (both dir and .car), have its sprites/audio load correctly from its private assets, register providers, and have the experience feel supported and documented — with tgl_demo serving as the living reference.
+
+## Key Decisions
+
+| # | Decision | Resolution |
+|---|----------|------------|
+| A | Filename / title for the tracking doc | `docs/PHASE1_CARTRIDGE_SYSTEM_POLISH.md` titled "Phase 1 - Cartridge System Polish" (matches user preference + vision plan language + PR3 report style in docs/). |
+| B | Scope for PHASE1 | Core system polish (A–F) + one explicit "Reference Cartridge Validation" track (P1-G, tgl_demo as proof). Retro/emergent layer and full native FFI deferred to follow-on (per user choice). |
+| C | Representation of prior/recent work | Hybrid approach: short "Context & Progress So Far" section + tracks scoped to remaining polish items. Credits TGL hot-restart/entrypoint UX, PR #3 demo+core+hook hygiene, and save robustness without bloating the active tracks table. |
+| D | Vision reference strategy | Create thin `docs/CARTRIDGE_VISION.md` as stable pointer; treat `CARTRIDGE_ARCHITECTURE_VISION_AND_AUDIT.md` as the detailed canonical source + gap table + full roadmap. |
+| E | Track prioritization | Asset consistency (P1-A) first (single largest blocker per audit), followed by loader hygiene + Context, tooling, docs, enforcement. Reference validation runs in parallel as validation. |
+| F | Asset fix approach (initial) | Prefer making engine loaders (starting with RenderSystem._load_texture and callers) resolve candidate paths via ResourceManager when present, rather than requiring cartridge authors to change asset paths. Keep directory mode (dev) and archive mode both supported. |
+
+## Execution Priority
+
+1. P1-A - Asset loading consistency. Highest leverage; without it cartridge assets are unreliable for the primary visual/audio use cases.
+2. P1-B / P1-C - Loader lifecycle + Context facade. Foundational for safe dev loops, hot-restart patterns (already prototyped in tgl_demo), and future native/multi-cartridge work.
+3. P1-D / P1-E - Tooling + docs. Make the "happy path" discoverable and the old `examples/games/` model no longer the default story.
+4. P1-F - Small but high-signal enforcement item (version requirements already declared in tgl_demo manifest).
+5. P1-G - Continuous validation. Ensure changes don't regress the reference cartridge and that the full pack/load/save/reset cycle is exercised and documented.
+
+## Track P1-A - Asset Loading Consistency for Cartridge Mounts
+
+### Problem
+
+The single largest practical blocker identified in the audit:
+- `RenderSystem._load_texture` (and `_create_...` paths) calls `self.loader.loadTexture(image_path)` directly (bypassing `ResourceManager` entirely).
+- Similar direct Panda loads exist or historically existed in audio players, asset hot-swap, and various demos.
+- When a cartridge mounts its `assets/` as the highest-priority root (via `mount_asset_root(..., prepend=True)`), sprites and sounds declared with relative paths inside the cartridge fail to resolve or pull the wrong (engine) asset.
+- tgl_demo currently works in dev because it can fall back to CWD/engine roots; packaged `.car` usage and strict cartridge isolation will break.
+
+This directly contradicts the "assets from cartridge take precedence" contract.
+
+### Fix
+
+- Introduce (or expose) a resolution + load helper on `ResourceManager` (or a small adapter) that iterates `asset_roots` + cartridge mounts and returns a loadable path or loaded object.
+- Update `RenderSystem` (at minimum `_load_texture`, egg paths, and any CardMaker texture usage) to ask the resource_manager first when one is available (the Game already wires it).
+- Apply the same pattern to other direct-load sites that affect cartridge authors (audio, hot-swap if used by cartridges).
+- Keep backward compat for non-cartridge / legacy direct paths.
+- Add a simple test that a cartridge with its own sprite in `assets/` renders it (not the engine copy) when mounted.
+
+### Acceptance criteria
+- A cartridge's `assets/sprites/foo.egg` (or .png) is used when the cartridge is the highest mount, even if an engine `assets/sprites/foo.egg` also exists.
+- No change required to paths inside cartridge code or `cartridge.json`.
+- Directory mode (dev) and archive mode behave identically for assets.
+- Existing non-cartridge demos continue to work unchanged.
+
+### Validation
+- Run `python main.py --cartridge examples/cartridges/tgl_demo` before/after; visual assets must be identical.
+- Manually craft or temporarily modify a cartridge with a distinct asset under its private `assets/` and confirm it wins.
+- After packaging the cartridge, load the `.car` and verify the same.
+- Add (or extend) an integration test under `tests/integration/` exercising cartridge asset precedence.
+- Grep for other `base.loader.load` / `loadTexture` / `loadSfx` / `loadModel` call sites outside ResourceManager and address in follow-up within the track if they affect visuals/audio.
+
+### Progress / Rationale (workon-phase session)
+- **Protocol followed**: /workon-phase 1 invoked by user; phase number clear from context + explicit "1". No specific track named in the slash command, so per skill: inspected code to verify all PHASE1 claims (do not blindly trust the doc), chose highest-priority unblocked track (P1-A), and used ask_user_question to confirm choice before any implementation edits.
+- **Independent verification (selected excerpts)**:
+  - RenderSystem: `_load_texture` (line ~48: `self.loader.loadTexture(image_path)`) and `_create_egg_sprite_node` (~97: `self.loader.loadModel(image_path)`) bypass RM completely. Caching and CardMaker paths are keyed on the raw relative path supplied by SpriteComponent.image_path. No mention of asset_roots or resolve anywhere in the file.
+  - ResourceManager: `mount_asset_root(..., prepend=True)` (109), `unmount_asset_root` (119), `_iter_candidate_paths` + `_resolve_asset_path` (443-451) + `load_*` using resolved full paths all exist and are solid. Loader correctly calls `_mount_assets` (which does prepend) when RM is supplied (loader.py:202 and main.py:266). But Render (and cartridge visual probe helper) never call into it.
+  - main.py: RM created *after* RenderSystem (87 vs 99); cartridge loader receives RM (263-266) but that only helps what RM itself loads.
+  - tgl_demo: cartridge.json declares `"requires": {"engine": "^0.1.0"}`; entrypoint.initialize receives raw (world,base,manifest); its `get_visual_size(..., base.loader)` + sprite paths "assets/..." go through direct loads for both render and hitbox derivation.
+  - No engine/cartridge/context.py; project_gen only emits legacy games/ layout; loader load_* paths never consult engine_requirement after from_dict.
+- **Decision for P1-A**: Start here (matches doc Execution Priority #1 + "single largest practical blocker"). Fix is localized, high value, zero path changes for cartridge authors (AC), and makes tgl_demo (P1-G canary) correct for both dir and .car.
+- **Design (not blind copy of doc suggestion)**:
+  - Expose a tiny public `resolve_asset_path(relative) -> Optional[str]` on ResourceManager (thin wrapper over the existing private; keeps all the precedence/mount logic in one place).
+  - Give RenderSystem an optional `resource_manager=None` ctor param (stored as self.resource_manager). Resolve (if present) only to compute the *load_path* passed to Panda; keep cache + print identity + all egg normalization / base_scale / nearest filter logic unchanged and keyed on the *declared* image_path. Backward compat: if no RM, original raw path behavior is identical.
+  - Reorder RM creation in Game.__init__ so it exists before RenderSystem (and pass it). Streaming creation stays inside the ASSETS block.
+  - For the reference cartridge's hitbox helper (sprite_visual_size.py, used at initialize time before sprites exist): extend get_visual_size / _get_egg... to accept optional `resource_manager=None`; resolve before loadModel if supplied. Update the 3 call sites in tgl/entrypoint.py to pass `getattr(base, "resource_manager", None)`. Declared asset strings ("assets/...") and public API of helper for other callers remain unchanged.
+  - Audio/other direct loads noted via grep but deferred within-track unless a core site affects cartridge visuals; primary win is sprite/egg path (the reported pain point and tgl usage).
+- **Scope note**: This track does not implement unload (P1-B), CartridgeContext (P1-C), init scaffolding (P1-D), top-level docs rewrite (P1-E), or version enforcement (P1-F). Those remain for subsequent tracks. P1-G validation (pack + load tgl + reset UX) will be exercised continuously and explicitly at end of this track.
+- Changes will be made via precise edits + tests. Rationale recorded here per workon-phase skill requirement ("maintain a rationale for your decisions and actions. Document this rationale in a block to the current PHASE## REPORT md file").
+
+**Implementation & Validation notes (same session)**
+
+- Core changes landed:
+  - `engine/assets/resource_manager.py`: added public `resolve_asset_path(relative_path)` (thin, documented wrapper over the existing layered mount logic).
+  - `engine/graphics/systems/render_system.py`: ctor now accepts optional `resource_manager`; both `_load_texture` and `_create_egg_sprite_node` resolve (when RM present) to obtain the load_path for Panda while preserving original relative as cache key + all existing behavior/normalization.
+  - `main.py`: RM creation hoisted before RenderSystem (and passed through); comment added for the wiring.
+  - `examples/cartridges/tgl_demo/python/tgl/utils/sprite_visual_size.py` + `entrypoint.py`: helper now forwards/uses RM for the egg bounds probe at initialize time; call sites pass `base.resource_manager` (or None). Declared paths unchanged.
+- Unit tests: `pytest tests/unit/test_resource_manager.py` (3/3 passed, including brand-new `test_resolve_asset_path_prefers_overlay` exercising mount precedence for the exact API now used by Render) + `tests/unit/test_cartridge.py` (10/10 passed — loader mount + archive flows unaffected).
+- tgl_demo remains the live canary (P1-G): its manifest, hot-restart, dev keys, visual-size-derived colliders, and guarded wiring are all still exercised on every manual run. The asset changes make its "assets/..." references (ship, bullet, asteroid eggs) reliably resolve from the cartridge mount in both dir and future .car scenarios.
+- Next manual validation recommended (requires display): `python main.py --cartridge examples/cartridges/tgl_demo` (should behave identically to before for visuals) + from inside the cartridge dir `py2d-cartridge .` (or the module equiv) then `python main.py --cartridge <the-produced.car>` and confirm sprites still appear (now via the archive extract + mount + resolve path).
+- Any other direct Panda load sites affecting cartridges (audio systems, other demos) can be addressed as cheap follow-ups inside this track or moved to Follow-On if they are non-blocking for the reference cartridge.
+
+## Track P1-B - Loader Lifecycle & Isolation
+
+### Problem
+
+- Both `load_directory` and `load_archive` do unconditional `sys.path.insert(0, ...)` with no removal on unload or process end.
+- `self.loaded` dict records history but there is no public `unload_cartridge`, no teardown hook on the entrypoint, and no restoration of prior sys.path state.
+- Documented limitation: "only one cartridge overlay is active at a time".
+- This pollutes the interpreter, makes repeated dev loads (or future host apps) fragile, and blocks clean hot-restart semantics beyond what tgl_demo achieved internally via its own `.reset()`.
+
+### Fix
+
+- Add `unload(name_or_context)` (or `unload_cartridge`) to `CartridgeLoader` that:
+  - Removes the corresponding python_path from sys.path (if it was added by us).
+  - Calls an optional `teardown` / `unload` hook on the entry instance if present.
+  - Unmounts the asset root (if ResourceManager supports it cleanly).
+  - Cleans up the `loaded` entry and (optionally) removes extracted temp dirs under policy.
+- Consider using `importlib.util` for more isolated module loading in a follow-up iteration (document current raw-insert limitation honestly in the interim).
+- Make the tgl_demo-style `.reset()` pattern (clear entities, reset spawners/controllers, re-spawn) easier or promoted via a documented optional hook.
+- Ensure `load_directory` (the fast dev path) and archive paths have symmetric lifecycle.
+
+### Acceptance criteria
+- After `loader.unload(...)` the previously injected python path is no longer on sys.path (or at least no longer first).
+- A second cartridge (or re-load of the same) can be loaded in the same process without accumulating path entries.
+- Entry instances can implement `teardown(world, base)` (or similar) and have it called.
+- tgl_demo hot-restart (R key) continues to work and can be re-expressed in terms of loader facilities if it makes sense.
+
+### Validation
+- Manual: load tgl_demo (dir), exercise, unload, inspect sys.path, load again (or a different cartridge).
+- Add a unit/integration test that round-trips load + unload + re-load without path pollution or duplicate systems.
+- Update the cartridge_loader_guide.md "Known Limitations" section to reflect the new capability (or remaining gaps).
+
+### Progress / Rationale (workon-phase session)
+- **Protocol followed**: After completing P1-A, user invoked `/workon-phase whatever track makes sense`. Per skill: re-verified remaining tracks with fresh reads/greps (loader.py full content, guide Known Limitations exact text, main.py _do_restart + loader creation, tgl entrypoint reset/_ensure_systems_and_events, test_cartridge.py structure, absence of context.py and any unload/teardown/sys.path.remove in cartridge package). Confirmed P1-B claims still 100% accurate. Chose P1-B as the unblocked track that "makes sense" (next in Execution Priority, directly fixes the still-documented limitations, leverages P1-A's RM unmount, foundational for P1-C and future work). Used ask_user_question with full verification + rationale for choice; user explicitly selected "Start with P1-B (Loader Lifecycle & Isolation)".
+- **Why P1-B first (post-P1-A)**: It is the highest remaining priority item. The current "only one cartridge overlay" limitation is explicitly called out in the live guide and is the reason tgl_demo grew a sophisticated custom `reset()` + `_systems_wired` guard + background child cleanup. Providing real `unload` gives the engine a proper lifecycle instead of relying solely on cartridge workarounds. RM.unmount_asset_root is already reliable (P1-A).
+- **Design decisions (recorded for the executive record)**:
+  - Track insertions ourselves: `self._python_path_for: Dict[str, Optional[str]]` and `self._asset_root_for: Dict[str, Optional[str]]` populated during both load_directory and load_archive (only record when we actually did the insert/mount). This makes removal reliable and O(1) without scanning sys.path or guessing which root was "ours".
+  - `unload(name_or_context=None)`: Accepts str (cartridge name), a LoadedCartridge instance, or None (when exactly one is loaded, for convenience). Idempotent and safe (returns False if not present).
+  - Teardown hook dispatch: Look for `teardown`, then `unload`, then `cleanup` on the entry instance (first one wins). Call with the same `(world=..., base=..., manifest=...)` kwargs as the initialize-style hooks for maximum symmetry and to keep simple (no new calling convention yet).
+  - Asset unmount: Call `resource_manager.unmount_asset_root(str(path))` if we recorded a path and RM supports the method (already true post P1-A).
+  - sys.path removal: `sys.path.remove(...)` only for the exact string we inserted (wrapped in try/except ValueError for safety).
+  - Extract cleanup: Conservative — do **not** auto `shutil.rmtree` the extract_dir on unload. Temp dirs can accumulate (current behavior); we document the policy and can add an explicit `cleanup_extracts=True` or separate method later. Avoids surprising users or deleting something a cartridge author wanted to inspect.
+  - No Python module unloading: Explicitly out of scope for v1 of this (Python's import system doesn't support clean unload of packages). We note the "consider importlib.util for more isolated loading" item from the doc as future work and keep the raw sys.path approach for now (honest limitation).
+  - tgl_demo compatibility: Zero changes required to its entrypoint or reset(). Its R/F5 hot-restart (via main._do_restart calling entry.reset()) continues to work exactly as before. `unload` is complementary (full cartridge removal / switch); `.reset()` remains the cartridge's way to "reload same cartridge state quickly".
+  - LoadedCartridge left unchanged for now (it already carries everything needed). Future P1-C context can wrap/reference it.
+- **Files expected to change**: engine/cartridge/loader.py (core), tests/unit/test_cartridge.py (new roundtrip + teardown + path + unmount tests), docs/guides/cartridge_loader_guide.md (update Known Limitations + add brief unload example).
+- Rationale and decisions documented here per workon-phase skill requirement.
+
+**Implementation & Validation notes (same session)**
+
+- Core changes:
+  - `engine/cartridge/loader.py`: Added `_python_path_for` and `_asset_root_for` trackers in `__init__`. Both load paths now record what they actually inserted/mounted. New `unload(name_or_context)` method implements the full contract (hook dispatch with compat calling convention, asset unmount via RM, exact sys.path removal, loaded cleanup). Conservative extract policy (no auto-delete).
+  - `tests/unit/test_cartridge.py`: 3 new tests exercising path removal + re-load cleanliness, teardown hook invocation (dynamic attach on entry), and asset unmount tracking via a subclassed Dummy RM.
+  - `docs/guides/cartridge_loader_guide.md`: Updated Known Limitations section to describe the new `unload` API, qualified the "one cartridge" story, added forward pointer to PHASE1 tracks.
+- Test results: `pytest tests/unit/test_cartridge.py` → 13/13 passed (original 10 + 3 new P1-B tests).
+- tgl_demo canary (P1-G): Unaffected. Its custom `reset()` + guarded wiring + background cleanup continues to power the R/F5 hot-restart exactly as before. `unload` is now available for full cartridge teardown or clean switching scenarios.
+- No changes were needed in main.py or the tgl entrypoint for this track (deliberate; keeps hot-restart UX stable).
+- Follow-up within phase or later: the dev_tools asset hot-swap still has direct loads (non-blocking); richer multi-cartridge host ergonomics belong in P4.
+
+## Track P1-C - CartridgeContext / EngineAPI Facade
+
+### Problem
+
+- Entrypoint hooks and `register(world, base)` receive raw `World` (the ECS one), the Panda3D `ShowBase` subclass (`Game`), and the `manifest`.
+- This works but leaks engine internals, makes future native FFI painful (raw Python objects across the boundary), and provides no stable versioned surface for cartridge authors.
+- The vision and audit both call for a small, versioned `CartridgeContext` (or `EngineAPI`) object.
+
+### Fix
+
+- Introduce `engine/cartridge/context.py` defining a minimal `CartridgeContext` dataclass/protocol that holds (or proxies) the useful pieces: `world`, `base`, `manifest`, `save_state_manager`, `resource_manager`, and (later) `loader` for self-unload.
+- Update `CartridgeLoader._run_entry_hook` and `_register_system_modules` (and the call sites in main) to construct and pass a context object instead of (or in addition to) the raw three args.
+- Support a short transition period where the old `(world=..., base=..., manifest=...)` kwargs still work (for existing cartridges like tgl_demo).
+- Document the new object as the sanctioned surface in the loader guide and in `CARTRIDGE_VISION.md`.
+
+### Acceptance criteria
+- New cartridges can be written against `CartridgeContext` only.
+- Existing cartridges (tgl_demo) continue to run unchanged during the transition.
+- The context object is what gets injected for save_state_manager etc.
+- Native plugin design (future) has a clear, narrow target.
+
+### Validation
+- Update tgl_demo entrypoint (or a new minimal example) to accept the context form.
+- Run all cartridge-related tests + manual tgl load.
+- Add type hints / a small Protocol for the context.
+
+## Track P1-D - Authoring & Scaffolding Tooling
+
+### Problem
+
+- `tools/cli/project_gen.py` (exposed as `py2d-engine` / `py2d-cartridge` in some wiring) only knows how to scaffold into `examples/games/` using the old non-cartridge layout.
+- There is excellent packaging (`cartridge_pack.py` → `py2d-cartridge .`), but no `init` command that produces a ready-to-edit cartridge tree with `config/cartridge.json`, `python/<slug>/entrypoint.py` + sample register, `assets/`, README, and a minimal test or provider example.
+- This creates cognitive dissonance and makes the "correct" path invisible to new authors.
+
+### Fix
+
+- Add `new-cartridge` (or `init`) subcommand to the cartridge CLI (or enhance project_gen and re-wire entry points).
+- The scaffold should produce a minimal but complete tree that `py2d-cartridge .` can immediately pack and `python main.py --cartridge <dir>` can run.
+- Include a sample `PlayerComponent` + tiny system + a `SaveStateProvider` registration in the entrypoint to demonstrate the full happy path.
+- Update `project_gen` help text, commands, and any pyproject.toml scripts so the cartridge story is primary (or at least co-equal).
+- Optionally add `--template minimal|shooter|platformer` etc. that produce cartridge-structured output.
+
+### Acceptance criteria
+- `py2d-cartridge init my-game` (or equivalent) produces a tree that packs and runs with visible sprites and a registered provider.
+- Running the generated game via the launcher succeeds with no manual edits.
+- Old `new-game` path can be deprecated or kept for compatibility but is no longer the advertised default.
+
+### Validation
+- End-to-end: run the init command (in a temp dir), cd into result, pack, run via main.py --cartridge, observe it starts and can be packaged again.
+- Update docs and the thin CARTRIDGE_VISION with the new command.
+
+## Track P1-E - Documentation & Narrative Leadership
+
+### Problem
+
+- Top-level `README.md` has no mentions of `--cartridge`, `py2d-cartridge`, `CartridgeLoader`, or the cartridge model (per extraction).
+- `DEVELOPER_ONBOARDING.md` and `PROJECT_ORGANIZATION.md` still describe the old `examples/games/` + direct engine usage story.
+- The high-quality cartridge guides exist in `docs/guides/` but are not elevated or cross-linked from the primary navigation surfaces.
+- New developers have no obvious "this is how you build a game on this engine" path.
+
+### Fix
+
+- Rewrite the "Getting Started" / top sections of README to present cartridges first (quick start with tgl_demo or the new init), with a clear "Cartridges vs. examples/games (legacy)" note.
+- Update DEVELOPER_ONBOARDING and PROJECT_ORGANIZATION to lead with the cartridge mental model and link the guides + PHASE1 + AUDIT.
+- Add a short "Cartridge Quick Start" or "Your First Cartridge" section (can be light; point to the scaffold + tgl_demo + loader guide).
+- Ensure all future engine feature docs note cartridge usability.
+
+### Acceptance criteria
+- A new reader following the README can discover and run a cartridge in < 5 minutes.
+- Searching the docs for "cartridge" surfaces the architecture story, guides, and the tgl reference prominently.
+- The old examples/games path is still present for continuity but clearly secondary.
+
+### Validation
+- Manual review of README + onboarding after edits.
+- (Optional) Ask a fresh clone + follow the new top-level instructions.
+
+## Track P1-F - Manifest Completeness & Enforcement
+
+### Problem
+
+- `cartridge.requires.engine` (and the schema) is parsed into `CartridgeManifest.engine_requirement`.
+- tgl_demo already declares `"requires": {"engine": "^0.1.0"}`.
+- The loader never checks it (no enforcement, no warning, no error).
+
+### Fix
+
+- In `CartridgeLoader` (both load paths), after manifest parsing, if `engine_requirement` is present, perform a simple version check against the running engine version (expose `__version__` or similar if not already) and raise a clear `CartridgeValidationError` (or a new `CartridgeCompatibilityError`) on mismatch.
+- Start conservative: exact major/minor or use a simple semver lib / packaging.version if already a dep; otherwise a clear string match + "unsupported" warning for now.
+- Document the field in the config guide (it already exists in schema).
+
+### Acceptance criteria
+- A cartridge declaring an incompatible engine requirement fails to load with an actionable message.
+- tgl_demo (which declares ^0.1.0) continues to load on current dev versions.
+- No breaking change to manifests that omit the field.
+
+### Validation
+- Unit test for the check (manifest with future version, manifest with compatible range, manifest without field).
+- Manual: temporarily edit tgl_demo cartridge.json to a bad range and confirm clean failure.
+
+## Track P1-G - Reference Cartridge Validation (tgl_demo)
+
+### Problem
+
+- tgl_demo is the primary (and currently only) in-tree cartridge exercising the full modern surface: proper `cartridge.json` with requires, directory mode, custom components/systems under its `python/tgl/` package, config-driven setup, CollisionLayer + mask_of, visual-size helper, player/enemy/bullet tuning, invuln visuals, hot-restart via entrypoint `.reset()`, guarded system wiring for dev safety, dev_mode propagation + viz toggle, and PandaCollisionSystem experimentation.
+- However, there is no automated "pack this cartridge → load the .car → exercise save provider roundtrip → hot-restart → clean unload" integration test.
+- The cartridge's own README and the engine docs do not yet position it as *the* canonical reference.
+- Some of the recent polish (hot-restart UX, dev tooling) was added to solve real iteration pain; it should be captured and made repeatable for other cartridge authors.
+
+### Fix
+
+- Ensure tgl_demo (and any future reference) remains loadable both as directory and as packed .car.
+- Add or extend an integration test that does the full pack → load archive → basic play loop or smoke (score, spawn, hit, reset) → optional provider capture/restore.
+- Document the "cartridge dev loop" (edit → R for hot restart, V for collision viz, ESC for clean exit) in the tgl README and cross-link from the loader guide.
+- As part of P1-A/B/C work, verify that tgl_demo assets and systems continue to work (it will be the canary).
+- Consider extracting any generally useful patterns from tgl's entrypoint (the `_ensure_systems_and_events` guard, `_safe_destroy`, reset contract) into a small optional base class or documented recipe.
+
+### Acceptance criteria
+- `py2d-cartridge examples/cartridges/tgl_demo` (or from inside) produces a loadable .car that runs and behaves like the dir version.
+- A test exercises at least load + a few entities + a save provider registration + reset.
+- The cartridge is explicitly called out in the new top-level docs as the reference implementation.
+
+### Validation
+- Run the pack + load-archive flow manually and via the new/updated test.
+- Verify hot-restart (R) and clean shutdown (ESC) still work post any loader changes.
+- Update tgl_demo's own README with a "Development" section covering the hotkeys and reset contract.
+
+## Context & Progress So Far (Hybrid)
+
+- Substantial prior execution on the tgl_demo cartridge (hitbox derivation bound to visual sprites via helper + scale, player damage blink/tint, --dev-mode + colored collision overlays with proper LineSegs baking, hot-restart via cartridge entrypoint `.reset()`, clean shutdown path, CollisionLayer standardization, config-driven sizes/scales, guarded wiring to support repeated initialize/reset).
+- PR #3 Copilot review addressing (32 threads) delivered wide hygiene: correct TransformComponent ctors/attributes (x/y/scale_x etc.), import path fixes across demos/tutorials/tools, pre-push hook portability, SaveStateManager test hygiene + world_provider robustness, RenderSystem import cleanup, audio positioning fixes, sys.path fixes in example runners. These directly improve the experience for anyone authoring or studying cartridges.
+- The tgl work + PR3 fixes were grouped and committed on `feat/M0-vision-calibration`; PR threads were resolved via the `git-address-comments` skill.
+- These items advanced the "reference cartridge" and "cartridge author DX" aspects of the vision. The PHASE1 tracks above focus on the remaining *system* seams that still need polish for the model to be primary and reliable.
+
+See the original TGL execution plan (in session artifacts) and `docs/PR3_COPILOT_COMMENTS_ADDRESSED.md` for details.
+
+## Follow-On Candidates
+
+Items surfaced but intentionally left out of (or only lightly touched in) this phase.
+
+| Candidate | Why it is deferred |
+|-----------|--------------------|
+| `engine/retro/` + fixed-point / subpixel / NES-quirk reference systems + demo cartridge | Core to the long-term creative vision but is a distinct creative/technical layer (Phase 2 in the audit/vision plan). |
+| Native plugin / FFI boundary (C ABI, Rust pyo3 capsules, manifest `plugins` section) | Parallel design track (Phase 3); keep the Python surface clean first so we have something stable to design against. |
+| Full multi-cartridge host application or menu | Requires robust unload + context + isolation (P1-B/C); design the seams now, build the host later. |
+| Cartridge packaging pipeline improvements (auto-copy shared sprites into cartridge tree, build hooks) | Valuable for real distribution (mentioned in FUTURE_TASKS and audit); can ride on top of a polished loader + init. |
+| Converting more existing demos into first-class cartridges | Good follow-on validation once the system + docs are solid. |
+| Hot-reload integration specific to cartridge python trees | Existing hot-reload exists; cartridge-specific treatment is a nice-to-have after basic lifecycle is reliable. |
+
+## Implementation Notes
+
+- This PHASE1 document was created following the `docs/PHASE_REPORT_TEMPLATE.md` during a planning session that first read the prior cartridge vision plan (session 019e612c...), the detailed CARTRIDGE_ARCHITECTURE_VISION_AND_AUDIT.md, FUTURE_TASKS.md, cartridge guides, the current TGL execution plan, PR3 report, loader/render/manifest source, and user-provided choices via interactive questions.
+- Tracks are intentionally scoped to "polish to make the existing architecture primary and reliable." No broad engine rewrites.
+- The tgl_demo cartridge (and its recent enhancements) is treated as both a consumer and a validation artifact for this phase.
+- Keep this document as the executive record; split detailed design spikes (e.g. exact Context API, RenderSystem integration strategy) into linked docs or issues if a track grows.
+- Update status, last-updated date, and the tracks table as work lands. Move completed track details into the Outcome section or a "What Shipped" addendum when the phase is declared complete.
+
+## Outcome
+
+*(To be filled when the phase is complete.)*
+
+- What shipped.
+- What was deferred (moved to Follow-On or later PHASE docs).
+- What should happen next (link to PHASE2 or specific next tracks).
+
+---
+
+## Optional Sections (populated lightly for signal)
+
+**Files affected (initial map, will grow)**  
+Core: `engine/cartridge/loader.py`, `engine/cartridge/context.py` (new), `engine/cartridge/manifest.py` (minor), `engine/graphics/systems/render_system.py` (and peer direct loaders), `tools/cli/cartridge_pack.py` + `project_gen.py`, `main.py` (minor wiring).  
+Docs: `README.md`, `docs/DEVELOPER_ONBOARDING.md`, `docs/PROJECT_ORGANIZATION.md`, `docs/guides/cartridge_loader_guide.md` (and siblings), new `docs/CARTRIDGE_VISION.md` + this file.  
+Reference/validation: `examples/cartridges/tgl_demo/` (validation + any doc updates), new or extended integration tests.  
+Tests: cartridge + save-state + new asset-precedence + loader-lifecycle tests.
+
+**Testing Strategy**  
+- Existing `tests/unit/test_cartridge.py` + `test_save_state_manager.py` must continue to pass.
+- New/expanded integration coverage for the full cartridge lifecycle (pack, load dir, load archive, assets, providers, unload).
+- Manual "golden path" run of the reference cartridge in both modes after every track that touches loading or assets.
+- Pre-push hook (already updated for portability) will run the unit suite.
+
+*This phase turns a promising, partially-realized cartridge architecture into the defining, well-supported, primary authoring model for the engine.*

@@ -341,3 +341,125 @@ def test_cartridge_pack_cli_dry_run_skips_archive(tmp_path):
 
     assert exit_code == 0
     assert not output_path.exists()
+
+
+# ------------------------------------------------------------------
+# P1-B: Loader unload lifecycle tests
+# ------------------------------------------------------------------
+
+def test_loader_unload_removes_python_path_and_loaded_entry(tmp_path):
+    """Core P1-B behavior: after unload the python path we inserted is gone and
+    the cartridge is no longer in loader.loaded. Re-load must succeed cleanly.
+    """
+    cartridge_dir = tmp_path / "cartridge"
+    cartridge_dir, _ = _create_cartridge_tree(cartridge_dir)
+    archive_path = tmp_path / "test.car"
+    _zip_cartridge(cartridge_dir, archive_path)
+
+    loader = CartridgeLoader(
+        world=DummyWorld(),
+        base=DummyBase(),
+        resource_manager=DummyResourceManager(),
+        extract_root=tmp_path / "extract_unload",
+    )
+
+    try:
+        # Directory load first (fast path)
+        ctx = loader.load_directory(str(cartridge_dir))
+        name = ctx.manifest.name
+
+        # The python path for the cartridge should have been recorded and be on sys.path
+        py_paths_before = [p for p in sys.path if "cartridge" in p or name.lower() in p.lower()]
+        assert name in loader.loaded
+        assert loader._python_path_for.get(name) is not None
+
+        # Unload
+        assert loader.unload(name) is True
+        assert name not in loader.loaded
+        assert loader.unload(name) is False  # idempotent
+
+        removed_path = loader._python_path_for.get(name)  # should have been popped
+        assert removed_path is None or removed_path not in sys.path
+
+        # Re-load the same cartridge (or archive) must work without accumulating duplicates
+        ctx2 = loader.load_archive(archive_path)
+        assert ctx2.manifest.name == name
+        assert name in loader.loaded
+    finally:
+        _cleanup_modules()
+        # Best-effort cleanup of any path we may have left (in case of test failure)
+        for p in list(sys.path):
+            if "cartridge" in str(p).lower() or str(tmp_path) in str(p):
+                try:
+                    sys.path.remove(p)
+                except ValueError:
+                    pass
+
+
+def test_loader_unload_calls_teardown_hook(tmp_path):
+    """If the entrypoint instance has a teardown (or unload/cleanup) method it is invoked."""
+    cartridge_dir = tmp_path / "with_teardown"
+    cartridge_dir, _ = _create_cartridge_tree(cartridge_dir)
+
+    loader = CartridgeLoader(
+        world=DummyWorld(),
+        base=DummyBase(),
+        resource_manager=DummyResourceManager(),
+        extract_root=tmp_path / "extract_teardown",
+    )
+
+    teardown_called = {"flag": False, "manifest_name": None}
+
+    try:
+        ctx = loader.load_directory(str(cartridge_dir))
+        entry = ctx.entry_instance
+
+        def fake_teardown(world=None, base=None, manifest=None):
+            teardown_called["flag"] = True
+            teardown_called["manifest_name"] = getattr(manifest, "name", None)
+
+        # Attach after load (the hook lookup uses getattr at unload time)
+        entry.teardown = fake_teardown
+
+        assert loader.unload(ctx) is True
+        assert teardown_called["flag"] is True
+        assert teardown_called["manifest_name"] == "Test Cartridge"
+    finally:
+        _cleanup_modules()
+
+
+def test_loader_unload_unmounts_assets(tmp_path):
+    """unload must call unmount_asset_root on the RM for the recorded cartridge assets path."""
+    cartridge_dir = tmp_path / "asset_unmount"
+    cartridge_dir, _ = _create_cartridge_tree(cartridge_dir)
+
+    class TrackingRM(DummyResourceManager):
+        def __init__(self):
+            super().__init__()
+            self.unmount_calls: list[str] = []
+
+        def unmount_asset_root(self, path: str):
+            self.unmount_calls.append(path)
+
+    rm = TrackingRM()
+    loader = CartridgeLoader(
+        world=DummyWorld(),
+        base=DummyBase(),
+        resource_manager=rm,
+        extract_root=tmp_path / "extract_assets",
+    )
+
+    try:
+        ctx = loader.load_directory(str(cartridge_dir))
+        name = ctx.manifest.name
+
+        # We should have recorded the asset root during load
+        recorded = loader._asset_root_for.get(name)
+        assert recorded is not None
+
+        assert loader.unload(name) is True
+        assert any(recorded in call for call in rm.unmount_calls), (
+            f"expected unmount of {recorded}, got {rm.unmount_calls}"
+        )
+    finally:
+        _cleanup_modules()

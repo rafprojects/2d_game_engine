@@ -50,6 +50,10 @@ class CartridgeLoader:
         self.extract_root = Path(extract_root) if extract_root else Path(tempfile.gettempdir()) / "2dge_cartridges"
         self.extract_root.mkdir(parents=True, exist_ok=True)
         self.loaded: Dict[str, LoadedCartridge] = {}
+        # Track what *we* inserted so unload can cleanly reverse sys.path and asset mounts.
+        # Keyed by cartridge manifest.name for reliable lookup regardless of how unload is called.
+        self._python_path_for: Dict[str, Optional[str]] = {}
+        self._asset_root_for: Dict[str, Optional[str]] = {}
         self._manifest_schema: Optional[Dict[str, Any]] = None
         self._validator: Optional[Draft202012Validator] = None
 
@@ -75,15 +79,21 @@ class CartridgeLoader:
             raise CartridgeValidationError(str(exc)) from exc
 
         python_path = directory_path / manifest.python_path
+        inserted_py = None
         if python_path.exists() and python_path.is_dir():
             path_str = str(python_path)
             if path_str not in sys.path:
                 sys.path.insert(0, path_str)
+                inserted_py = path_str
+        self._python_path_for[manifest.name] = inserted_py
 
         # Assets are optional in directory mode — sprites may be served from CWD.
         assets_path = directory_path / manifest.assets.mount_path
+        mounted_asset = None
         if assets_path.exists():
             self._mount_assets(assets_path)
+            mounted_asset = str(assets_path)
+        self._asset_root_for[manifest.name] = mounted_asset
 
         if self.save_state_manager:
             self.save_state_manager.attach_manifest(manifest)
@@ -116,14 +126,18 @@ class CartridgeLoader:
             extract_dir = self._extract_archive(zf, manifest)
 
         python_path = extract_dir / manifest.python_path
+        inserted_py = None
         if python_path.exists() and python_path.is_dir():
             path_str = str(python_path)
             if path_str not in sys.path:
                 sys.path.insert(0, path_str)
+                inserted_py = path_str
+        self._python_path_for[manifest.name] = inserted_py
 
         assets_path = extract_dir / manifest.assets.mount_path
         if assets_path.exists():
             self._mount_assets(assets_path)
+            self._asset_root_for[manifest.name] = str(assets_path)
         else:
             raise CartridgeLoadError(f"Cartridge assets directory missing: {assets_path}")
 
@@ -147,6 +161,77 @@ class CartridgeLoader:
 
         self.loaded[manifest.name] = context
         return context
+
+    def unload(self, name_or_context: str | LoadedCartridge | None = None) -> bool:
+        """Unload a previously loaded cartridge by name or LoadedCartridge instance.
+
+        - Removes any python_path we inserted from sys.path (if present).
+        - Calls an optional `teardown` / `unload` / `cleanup` hook on the entry instance
+          (first match wins), passing the same (world, base, manifest) style as initialize hooks.
+        - Unmounts the cartridge's asset root via ResourceManager (if recorded and supported).
+        - Removes the entry from self.loaded.
+        - Extract directories for archives are left in place (conservative; caller can clean
+          the extract_root if desired).
+
+        Returns True if a cartridge was unloaded, False if nothing matched (idempotent/safe).
+        """
+        if not self.loaded:
+            return False
+
+        name: Optional[str]
+        if name_or_context is None:
+            if len(self.loaded) == 1:
+                name = next(iter(self.loaded.keys()))
+            else:
+                # Future multi-cartridge hosts will need to be explicit.
+                raise ValueError(
+                    "Multiple cartridges loaded; specify a name or LoadedCartridge to unload"
+                )
+        elif isinstance(name_or_context, LoadedCartridge):
+            name = name_or_context.manifest.name
+        elif isinstance(name_or_context, str):
+            name = name_or_context
+        else:
+            raise TypeError("name_or_context must be str, LoadedCartridge, or None")
+
+        if name not in self.loaded:
+            return False
+
+        loaded = self.loaded[name]
+        entry = loaded.entry_instance
+
+        # 1. Optional teardown hook (symmetric naming to the load-side hooks)
+        for hook_name in ("teardown", "unload", "cleanup"):
+            hook = getattr(entry, hook_name, None)
+            if callable(hook):
+                try:
+                    hook(world=self.world, base=self.base, manifest=loaded.manifest)
+                except Exception as e:
+                    print(f"⚠️  {hook_name} hook for cartridge '{name}' raised: {e}")
+                break
+
+        # 2. Unmount assets (RM.unmount_asset_root is already implemented and used by P1-A fixes)
+        asset_path = self._asset_root_for.pop(name, None)
+        if asset_path and self.resource_manager is not None:
+            try:
+                if hasattr(self.resource_manager, "unmount_asset_root"):
+                    self.resource_manager.unmount_asset_root(asset_path)
+            except Exception as e:
+                print(f"⚠️  Failed to unmount assets for '{name}': {e}")
+
+        # 3. Remove the python path we inserted (only the exact one we own)
+        py_path = self._python_path_for.pop(name, None)
+        if py_path and py_path in sys.path:
+            try:
+                sys.path.remove(py_path)
+            except ValueError:
+                pass  # Already gone or was never there
+
+        # 4. Drop the record
+        del self.loaded[name]
+
+        print(f"🧹 Unloaded cartridge '{name}'")
+        return True
 
     def _read_manifest(self, zf: zipfile.ZipFile) -> CartridgeManifest:
         try:

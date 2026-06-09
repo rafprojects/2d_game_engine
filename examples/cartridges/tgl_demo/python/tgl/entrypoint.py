@@ -88,9 +88,12 @@ class TGLDemo:
         bullet_path = os.path.join("assets", "sprites", "weapons", "bullet.egg")
         asteroid_path = os.path.join("assets", "sprites", "enemies", "asteroid", "asteroid.egg")
 
-        ship_vis = get_visual_size(ship_path, base.loader)
-        bullet_vis = get_visual_size(bullet_path, base.loader)
-        enemy_vis = get_visual_size(asteroid_path, base.loader)
+        # Pass resource_manager (available on the Game/base after cartridge load mounts assets)
+        # so the visual-size probe for hitbox derivation also respects cartridge-private assets.
+        rm = getattr(base, "resource_manager", None)
+        ship_vis = get_visual_size(ship_path, base.loader, rm)
+        bullet_vis = get_visual_size(bullet_path, base.loader, rm)
+        enemy_vis = get_visual_size(asteroid_path, base.loader, rm)
 
         p_scale = float(cfg["player"].get("scale", 1.0))
         b_scale = float(cfg["bullet"].get("scale", 0.25))

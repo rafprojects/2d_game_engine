@@ -122,6 +122,16 @@ class ResourceManager(System):
         self.asset_roots = [root for root in self.asset_roots if root != normalized]
         if not self.asset_roots:
             self.asset_roots = [self._normalize_root("assets")]
+
+    def resolve_asset_path(self, relative_path: str) -> Optional[str]:
+        """Return the highest-priority existing full filesystem path for a relative
+        asset (cartridge mounts prepended via mount_asset_root win), or None.
+
+        This is the sanctioned hook for other engine systems (e.g. RenderSystem)
+        and cartridge helpers so that cartridge-private assets under a mounted
+        `assets/` take precedence without authors changing any path strings.
+        """
+        return self._resolve_asset_path(relative_path)
     
     def update(self, dt: float):
         """Update resource manager."""

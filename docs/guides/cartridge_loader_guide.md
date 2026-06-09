@@ -102,8 +102,10 @@ print(context.manifest.name)
 
 ## Known Limitations
 
-- Only one cartridge overlay is active at a time; loading a new archive simply mounts another root above the existing stack and does not tear down previously loaded systems.
-- Mounted overlays remain until the session ends; there is no UI/CLI workflow yet for unmounting or reordering roots.
-- Cartridge archives must already contain compiled Python modules/assets; there is no build pipeline yet. A CLI packer is planned for `tools/cli`.
+- **(Addressed in P1-B)** `CartridgeLoader.unload(name_or_context)` now exists. It removes any python path we inserted, calls an optional `teardown`/`unload`/`cleanup` hook on the entrypoint instance (if present), unmounts the cartridge's asset root (via `ResourceManager.unmount_asset_root`), and drops the `LoadedCartridge` record. Both directory and archive loads are supported. Call it as `loader.unload("my_cartridge")` or `loader.unload(loaded_context)`.
+- The "one cartridge at a time" mental model is still the primary supported mode (classic console cartridge). Loading a second cartridge while one is active will stack python paths and asset roots; explicit `unload` of the previous one is required for a clean switch.
+- Python modules are not unloaded from `sys.modules` (Python does not support clean package unload in general). A future iteration may adopt `importlib.util` for more isolated loading.
+- Cartridge archives must already contain compiled Python modules/assets; there is no build pipeline yet beyond the existing packer. 
+- No high-level host/menu UI for cartridge switching yet (see PHASE4 for multi-cartridge host sketches).
 
-Use this doc as the reference while iterating on the loader; future updates will flesh out schema validation, save-state integration, and CLI packaging.
+Use this doc as the reference while iterating on the loader; future updates will flesh out schema validation, save-state integration, and CLI packaging. See `PHASE1_CARTRIDGE_SYSTEM_POLISH.md` (tracks P1-B and P1-C) for the current lifecycle + context work.
