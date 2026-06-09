@@ -89,6 +89,16 @@ class PandaCollisionSystem(System):
         self._viz_enabled = False
         self._debug_overlays = {}
 
+        # Default debug colors per collision layer (for --dev-mode viz)
+        # Can be overridden with set_debug_color_for_layer()
+        self._debug_layer_colors: dict[int, tuple] = {
+            1: (0.2, 0.6, 1.0, 0.75),   # PLAYER - blue
+            2: (1.0, 0.25, 0.25, 0.75), # ENEMY - red
+            3: (1.0, 0.85, 0.2, 0.75),  # PLAYER_BULLET - yellow/gold
+            4: (0.9, 0.4, 0.1, 0.7),    # ENEMY_BULLET - orange
+            5: (0.6, 0.6, 0.6, 0.5),    # BOUNDARY - gray
+        }
+
         # Setup collision traverser
         # Note: We don't add the root node here. Instead, individual CollisionNodes
         # are added as entities are created. The traverser will find them automatically.
@@ -442,14 +452,14 @@ class PandaCollisionSystem(System):
                 print(f"  📍 Showing collision node: {node_name}")
                 node_path.show()
                 collision_node = node_path.node()
-                # Show the actual collision solids and bounds
                 if hasattr(collision_node, 'show'):
                     collision_node.show()
                 if hasattr(collision_node, 'showBounds'):
                     collision_node.showBounds()
-                # Make semi-transparent for visibility
                 node_path.setTransparency(True)
-                node_path.setColor(1, 1, 0, 0.5)
+                # Try to pick a nice per-layer color; fall back to yellow
+                # (we don't have the layer here easily, so we keep a neutral yellow for the actual CollisionNode)
+                node_path.setColor(1, 1, 0, 0.4)
             else:
                 print(f"  📍 Hiding collision node: {node_name}")
                 node_path.hide()
@@ -465,7 +475,7 @@ class PandaCollisionSystem(System):
                 print(f"  📍 Showing boundary node: {name}")
                 node_path.show()
                 node_path.setTransparency(True)
-                node_path.setColor(1, 1, 0, 0.35)
+                node_path.setColor(0.6, 0.6, 0.6, 0.5)  # gray for boundaries
                 node = node_path.node()
                 if hasattr(node, 'showBounds'):
                     node.showBounds()
@@ -476,12 +486,15 @@ class PandaCollisionSystem(System):
                 if hasattr(node, 'hideBounds'):
                     node.hideBounds()
 
-        # Toggle debug overlays visibility to match
+        # Toggle debug overlays visibility to match (use their original layer color when possible)
         for ent_id, overlay_np in self._debug_overlays.items():
             if show:
                 overlay_np.show()
                 overlay_np.setTransparency(TransparencyAttrib.M_alpha)
-                overlay_np.setColor(1, 1, 0, 0.5)
+                # We don't easily know the layer here, but the color was already set at creation time
+                # Re-apply a visible alpha in case it was dimmed
+                current_color = overlay_np.getColor()
+                overlay_np.setColor(current_color[0], current_color[1], current_color[2], 0.75)
             else:
                 overlay_np.hide()
 
@@ -520,14 +533,26 @@ class PandaCollisionSystem(System):
         if entity_id in self._debug_overlays:
             return
         np = None
+        # Resolve layer color up front so we can bake it into LineSegs geometry
+        color = self._debug_layer_colors.get(collider.collision_layer, (1, 1, 0, 0.5))
         if collider.collider_type in (ColliderType.RECTANGLE, ColliderType.BOX):
-            cm = CardMaker(f"viz_{entity_id}")
-            cm.set_frame(-0.5, 0.5, -0.5, 0.5)
-            np = NodePath(cm.generate())
-            # Rotate from XY to XZ plane
+            # Draw a wireframe rectangle (outline) — much better for seeing exact hitbox bounds
+            # than a filled card, especially when the box is small.
+            ls = LineSegs()
+            ls.set_color(*color)  # bake vertex color so colored lines actually appear (blue/red/yellow etc.)
+            ls.set_thickness(2.0)  # nice visible outline for dev hitbox viz
+            # rectangle in local space (will be scaled later)
+            ls.move_to(-0.5, 0, -0.5)
+            ls.draw_to( 0.5, 0, -0.5)
+            ls.draw_to( 0.5, 0,  0.5)
+            ls.draw_to(-0.5, 0,  0.5)
+            ls.draw_to(-0.5, 0, -0.5)
+            np = NodePath(ls.create())
+            # Rotate from XY to XZ plane to match our 2D convention
             np.set_hpr(0, -90, 0)
         elif collider.collider_type in (ColliderType.CIRCLE, ColliderType.SPHERE):
             ls = LineSegs()
+            ls.set_color(*color)
             ls.set_thickness(2.0)
             segs = 48
             for i in range(segs + 1):
@@ -546,7 +571,18 @@ class PandaCollisionSystem(System):
             np.set_hpr(0, -90, 0)
         np.reparentTo(self.collision_root)
         np.setTransparency(TransparencyAttrib.M_alpha)
-        np.setColor(1, 1, 0, 0.5)
+
+        # Also apply on the NodePath (for CardMaker fills + as a live tint override for LineSegs)
+        np.setColor(*color)
+
+        # Make debug overlays true always-on-top so they are easy to see over sprites
+        try:
+            np.setBin("fixed", 100)
+            np.setDepthWrite(False)
+            np.setDepthTest(False)
+        except Exception:
+            pass
+
         if not self._viz_enabled:
             np.hide()
         self._debug_overlays[entity_id] = np
@@ -560,17 +596,33 @@ class PandaCollisionSystem(System):
         np.set_hpr(0, 0, transform.rotation)
         # Match size
         if collider.collider_type in (ColliderType.RECTANGLE, ColliderType.BOX):
-            # Scale the card to collider size (x,z)
+            # Scale the debug outline to the exact collider size.
+            # For very small colliders (e.g. enemies after proper scaling), give the
+            # debug visualization a tiny minimum size so it's still easy to see.
             sx = max(0.001, collider.size.x)
             sz = max(0.001, collider.size.y)
+            # Slight visibility boost for tiny boxes during --dev-mode troubleshooting
+            min_debug = 0.022
+            sx = max(sx, min_debug)
+            sz = max(sz, min_debug)
             np.set_scale(sx, 1.0, sz)
         elif collider.collider_type in (ColliderType.CIRCLE, ColliderType.SPHERE):
             r = max(0.001, collider.radius)
+            r = max(r, 0.022)
             np.set_scale(r, 1.0, r)
+
+        # Re-apply layer color (in case it was changed via set_debug_color_for_layer after creation)
+        color = self._debug_layer_colors.get(collider.collision_layer)
+        if color:
+            np.setColor(*color)
 
     def is_collision_nodes_visible(self) -> bool:
         """Check if collision nodes are currently visible."""
         return self._viz_enabled
+
+    def set_debug_color_for_layer(self, layer: int, rgba: tuple[float, float, float, float]):
+        """Set the debug visualization color (r,g,b,a) used for entities on this collision layer."""
+        self._debug_layer_colors[int(layer)] = tuple(rgba)
 
     # --- Helpers and optional API ---
     def _int_to_bitmask32(self, mask_value: int) -> BitMask32:
