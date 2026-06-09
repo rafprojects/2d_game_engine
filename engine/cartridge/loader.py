@@ -79,6 +79,8 @@ class CartridgeLoader:
         except ValueError as exc:
             raise CartridgeValidationError(str(exc)) from exc
 
+        self._check_engine_requirement(manifest)
+
         python_path = directory_path / manifest.python_path
         inserted_py = None
         if python_path.exists() and python_path.is_dir():
@@ -127,6 +129,8 @@ class CartridgeLoader:
         with zipfile.ZipFile(archive_path, "r") as zf:
             manifest = self._read_manifest(zf)
             extract_dir = self._extract_archive(zf, manifest)
+
+        self._check_engine_requirement(manifest)
 
         python_path = extract_dir / manifest.python_path
         inserted_py = None
@@ -334,6 +338,87 @@ class CartridgeLoader:
             save_state_manager=self.save_state_manager,
             loader=self,
         )
+
+    def _check_engine_requirement(self, manifest: CartridgeManifest) -> None:
+        """Enforce manifest 'cartridge.requires.engine' if present (P1-F).
+
+        Called immediately after manifest parsing in both load_directory and
+        load_archive, before any side effects (sys.path, asset mounts, hooks).
+        Uses CartridgeValidationError for consistency with other manifest issues.
+        """
+        if not getattr(manifest, "engine_requirement", None):
+            return
+
+        current = self._get_current_engine_version()
+        if not self._requirement_satisfied(current, manifest.engine_requirement):
+            raise CartridgeValidationError(
+                f"Cartridge '{manifest.name}' requires engine "
+                f"{manifest.engine_requirement} but this engine is {current}"
+            )
+
+    def _get_current_engine_version(self) -> str:
+        """Best-effort engine version for requirement checks.
+
+        Prefers installed distribution metadata; falls back to the module attr
+        we expose (engine.__version__) and finally a safe default.
+        """
+        try:
+            import importlib.metadata
+
+            return importlib.metadata.version("py2d-game-engine")
+        except Exception:
+            pass
+
+        # Fallback to the attribute we maintain on the engine package (P1-F).
+        try:
+            import engine
+
+            return getattr(engine, "__version__", "0.1.0")
+        except Exception:
+            return "0.1.0"
+
+    def _requirement_satisfied(self, current_version: str, requirement: str) -> bool:
+        """Return True if current_version satisfies the declared requirement string.
+
+        Primary path uses 'packaging' (SpecifierSet) when available (rich semver,
+        caret ranges, etc.). Falls back to a conservative heuristic sufficient
+        for the current 0.1.x world and common "^0.1.0" style declarations.
+        """
+        req = (requirement or "").strip()
+        if not req:
+            return True
+
+        # Preferred: full semver support via packaging (transitive in most envs)
+        try:
+            from packaging.specifiers import SpecifierSet
+            from packaging.version import parse as parse_version
+
+            spec = SpecifierSet(req)
+            return parse_version(current_version) in spec
+        except Exception:
+            pass
+
+        # Conservative fallback (no 'packaging' or parse error).
+        # Handle common caret ranges ^X.Y.Z for the 0.x series explicitly,
+        # otherwise do a loose "base appears in current or current starts with base".
+        if req.startswith("^"):
+            base = req[1:].strip().split()[0]
+            try:
+                base_parts = [int(x) for x in base.split(".")[:2] if x.isdigit()]
+                cur_parts = [int(x) for x in current_version.split(".")[:2] if x.isdigit()]
+                if len(base_parts) >= 2 and len(cur_parts) >= 2:
+                    if base_parts[0] == 0:
+                        # ^0.1.0 intent: same major 0, minor >= base minor
+                        return cur_parts[0] == 0 and cur_parts[1] >= base_parts[1]
+                    return cur_parts[0] >= base_parts[0]
+            except Exception:
+                pass
+            base = base  # fall through to contains check below
+
+        base = req.lstrip("^~>=< ").strip().split()[0]
+        if not base:
+            return True
+        return base in current_version or current_version.startswith(base)
 
     def _run_entry_hook(
         self,

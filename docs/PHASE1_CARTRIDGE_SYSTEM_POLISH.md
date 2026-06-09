@@ -1,8 +1,8 @@
 # Phase 1 - Cartridge System Polish
 
-**Status:** In Progress (P1-A/B/C/D/E complete)  
+**Status:** In Progress (P1-A/B/C/D/E/F complete; P1-G remaining)  
 **Created:** 2026-06  
-**Last updated:** 2026-06 (P1-E implemented + verified per /workon-phase P1-E after P1-D commit + /compact)
+**Last updated:** 2026-06 (P1-F implemented + verified per /workon-phase P1-F after P1-E commit)
 
 ### Tracks
 
@@ -13,7 +13,7 @@
 | P1-C | CartridgeContext / EngineAPI facade (replace raw `(world, base, manifest)` hand-offs in hooks and register) | Complete ✅ | Medium |
 | P1-D | Authoring & scaffolding tooling (`py2d-cartridge init` / new-cartridge command; align `project_gen`; update CLI surface and packaging) | Complete ✅ | Medium |
 | P1-E | Documentation & narrative leadership (README, DEVELOPER_ONBOARDING, PROJECT_ORGANIZATION lead with cartridges as primary model; elevate + cross-link existing guides) | Complete ✅ | Small-Medium |
-| P1-F | Manifest completeness & enforcement (engine version requirement checking at load; minor schema/loader sync) | Planned | Small |
+| P1-F | Manifest completeness & enforcement (engine version requirement checking at load; minor schema/loader sync) | Complete ✅ | Small |
 | P1-G | Reference Cartridge Validation (tgl_demo as the canonical proof point exercising directory mode, archive pack/load, save providers, hot-restart UX, CollisionLayer, config, dev integration) | Partial (prior work) / In Progress | Medium |
 
 ---
@@ -356,6 +356,35 @@ This directly contradicts the "assets from cartridge take precedence" contract.
 ### Validation
 - Unit test for the check (manifest with future version, manifest with compatible range, manifest without field).
 - Manual: temporarily edit tgl_demo cartridge.json to a bad range and confirm clean failure.
+
+### Progress / Rationale (workon-phase session)
+- **Protocol followed**: User: "Ok great, now /workon-phase the next one that makes sense". Per skill (read SKILL.md + PHASE1 doc first): phase clear from context; no specific track named, so inspected remaining tracks (P1-F Planned, P1-G Partial/In Progress), performed independent verification of *every* claim in the P1-F Problem/Fix/AC/Validation sections using fresh reads/greps + runtime execution (do not blindly trust the PHASE doc), chose the unblocked track that "makes sense" (P1-F per Execution Priority), presented full verification evidence + rationale via ask_user_question before touching any code, and only proceeded after explicit user selection of P1-F.
+- **Independent verification (pre-edit, selected excerpts)**:
+  - manifest.py: `engine_requirement: Optional[str] = None` on CartridgeManifest; populated in `from_dict` via `cartridge.get("requires", {}).get("engine")`. Correct and live.
+  - examples/cartridges/tgl_demo/config/cartridge.json: exactly declares `"requires": {"engine": "^0.1.0"}`.
+  - loader.py (full read of load_directory + load_archive + _read_manifest): after `CartridgeManifest.from_dict` (or `_read_manifest` which does the same) there was **zero usage or enforcement** of `manifest.engine_requirement`. Side effects (sys.path, mounts, instantiate, hooks) happened unconditionally. Matches "The loader never checks it" exactly.
+  - errors.py: `CartridgeValidationError(CartridgeError)` already the standard error for manifest/schema/entrypoint problems.
+  - engine/__init__.py: no `__version__` (confirmed by read + grep). pyproject.toml has the package at "0.1.0". Runtime check: `importlib.metadata.version('py2d-game-engine')` failed in the editable venv (expected); module attr absent.
+  - schema.json: "requires" / "engine" is allowed under cartridge (description "Engine version range").
+  - test_cartridge.py: existing tests exercised load_directory/load_archive + validation errors, but zero tests mentioning engine_requirement.
+  - No other call sites were consulting the field.
+- **Decision for P1-F**: Highest-leverage remaining *system* item that is small, unblocked, and next in the documented priority list (after P1-E docs leadership). It turns a declared-but-ignored manifest field (already used by the reference tgl_demo) into real enforcement. Provides immediate safety for future cartridge distribution without affecting current dev experience. P1-G (broader reference validation + integration test + docs positioning) becomes a stronger capstone once this is in place.
+- **Design decisions (recorded)**:
+  - Version exposure: added `__version__ = "0.1.0"` to `engine/__init__.py` (and to `__all__`) as a discoverable fallback. Primary at runtime remains `importlib.metadata.version("py2d-game-engine")` (the distribution name).
+  - Check placement: private `_check_engine_requirement(manifest)` called immediately after manifest object creation in *both* `load_directory` (post-from_dict) and `load_archive` (post-_read_manifest), before any python_path insert, asset mount, SSM attach, entry instantiation or hooks. Early, consistent, no side effects on failure.
+  - Error: reuse `CartridgeValidationError` (already imported, already used for all manifest problems) → consistent UX and no new exception type.
+  - Satisfaction logic: `_requirement_satisfied` prefers `packaging.specifiers.SpecifierSet` + `packaging.version.parse` when importable (full caret, >=, etc. support). Graceful fallback heuristic that correctly handles the common "^0.1.0" case for 0.x series and loose contains/starts-with. No new hard dependency.
+  - Helpers kept private on the loader; `_get_current_engine_version` centralizes the metadata + fallback dance.
+  - No changes whatsoever to tgl_demo, cartridge.json schema, or public APIs beyond the new version attr (which is conventional).
+  - Tests: added three new tests in the existing unit module exercising the exact ACs via the public loader (incompatible raises with good message; compatible ^0.1.0 succeeds and the field is visible on manifest; omitted field succeeds with None).
+- **Files changed**: `engine/__init__.py` (version), `engine/cartridge/loader.py` (check call sites + three helper methods), `tests/unit/test_cartridge.py` (3 new P1-F tests), `docs/PHASE1_CARTRIDGE_SYSTEM_POLISH.md` (table + status + this rationale block).
+- **Test results (same session)**: `python -m pytest tests/unit/test_cartridge.py -q` → 17 passed (14 prior + 3 new). All P1-F scenarios (bad req, good req, no req) covered for the directory load path; archive path uses identical post-parse check.
+- **tgl_demo canary (P1-G)**: Completely untouched. Its existing `"requires": {"engine": "^0.1.0"}` declaration now actually gets exercised by the loader on every load (dir or .car). This is pure win for the reference cartridge without any code changes to it.
+- **ACs met**:
+  - Incompatible requirement (e.g. ^99) → raises CartridgeValidationError with actionable "requires engine X but this engine is Y" message.
+  - tgl_demo-style ^0.1.0 continues to load cleanly on current 0.1.0 engine.
+  - Manifests that omit the field (or the whole requires) load exactly as before.
+- Rationale and verification recorded here per workon-phase skill requirement. Ready for user to request "Commit changes" + next work (likely P1-G or a manual tgl bad-range smoke).
 
 ## Track P1-G - Reference Cartridge Validation (tgl_demo)
 

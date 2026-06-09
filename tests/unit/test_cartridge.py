@@ -397,6 +397,74 @@ def test_loader_unload_removes_python_path_and_loaded_entry(tmp_path):
                     pass
 
 
+# ------------------------------------------------------------------
+# P1-F: Manifest engine requirement enforcement (version compatibility)
+# ------------------------------------------------------------------
+
+def test_loader_rejects_incompatible_engine_requirement(tmp_path):
+    """A cartridge declaring a future/incompatible engine requirement must fail
+    early with CartridgeValidationError (before sys.path or asset side effects).
+    """
+    overrides = {"cartridge": {"requires": {"engine": "^99.0.0"}}}
+    cartridge_dir, _ = _create_cartridge_tree(tmp_path / "bad_req", overrides)
+
+    loader = CartridgeLoader(
+        world=DummyWorld(),
+        base=DummyBase(),
+        resource_manager=DummyResourceManager(),
+    )
+
+    with pytest.raises(CartridgeValidationError) as excinfo:
+        try:
+            loader.load_directory(str(cartridge_dir))
+        finally:
+            _cleanup_modules()
+
+    msg = str(excinfo.value)
+    assert "requires engine" in msg
+    assert "^99.0.0" in msg
+    assert "this engine is" in msg
+
+
+def test_loader_accepts_compatible_engine_requirement(tmp_path):
+    """^0.1.0 (as declared by the reference tgl_demo) must load successfully."""
+    overrides = {"cartridge": {"requires": {"engine": "^0.1.0"}}}
+    cartridge_dir, _ = _create_cartridge_tree(tmp_path / "good_req", overrides)
+
+    loader = CartridgeLoader(
+        world=DummyWorld(),
+        base=DummyBase(),
+        resource_manager=DummyResourceManager(),
+    )
+
+    try:
+        ctx = loader.load_directory(str(cartridge_dir))
+        assert ctx.manifest.engine_requirement == "^0.1.0"
+        assert ctx.manifest.name == "Test Cartridge"
+    finally:
+        _cleanup_modules()
+
+
+def test_loader_accepts_missing_engine_requirement(tmp_path):
+    """Manifests that omit 'requires.engine' entirely must continue to load
+    (no breaking change for existing or minimal cartridges).
+    """
+    # Explicitly ensure the key is absent by starting clean and not providing it
+    cartridge_dir, _ = _create_cartridge_tree(tmp_path / "no_req")
+
+    loader = CartridgeLoader(
+        world=DummyWorld(),
+        base=DummyBase(),
+        resource_manager=DummyResourceManager(),
+    )
+
+    try:
+        ctx = loader.load_directory(str(cartridge_dir))
+        assert ctx.manifest.engine_requirement is None
+    finally:
+        _cleanup_modules()
+
+
 def test_loader_unload_calls_teardown_hook(tmp_path):
     """If the entrypoint instance has a teardown (or unload/cleanup) method it is invoked."""
     cartridge_dir = tmp_path / "with_teardown"

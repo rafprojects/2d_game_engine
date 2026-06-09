@@ -59,4 +59,10 @@ __all__ = [
     'HotReloadManager', 'AssetHotSwapManager', 'ComponentInspector', # Dev Tools
     'SpriteSheet', # Graphics
     'InputBinding', # Input
+    '__version__',
 ]
+
+# Engine version for cartridge manifest "requires.engine" checks (P1-F).
+# Primary runtime source: importlib.metadata.version("py2d-game-engine")
+# (falls back to this value for editable/dev installs without metadata).
+__version__ = "0.1.0"
