@@ -1,8 +1,8 @@
 # Phase 1 - Cartridge System Polish
 
-**Status:** In Progress (P1-A/B/C complete)  
+**Status:** In Progress (P1-A/B/C/D complete)  
 **Created:** 2026-06  
-**Last updated:** 2026-06 (P1-C implemented + verified per /workon-phase P1-C)
+**Last updated:** 2026-06 (P1-D implemented + verified per /workon-phase P1-D)
 
 ### Tracks
 
@@ -11,7 +11,7 @@
 | P1-A | Asset loading consistency (RenderSystem + other direct Panda loads route through ResourceManager so cartridge `assets/` mounts take priority) | Complete ✅ | Large (critical) |
 | P1-B | Loader lifecycle & isolation (unload/teardown hooks, sys.path or importlib hygiene, explicit cartridge removal) | Complete ✅ | Medium |
 | P1-C | CartridgeContext / EngineAPI facade (replace raw `(world, base, manifest)` hand-offs in hooks and register) | Complete ✅ | Medium |
-| P1-D | Authoring & scaffolding tooling (`py2d-cartridge init` / new-cartridge command; align `project_gen`; update CLI surface and packaging) | Planned | Medium |
+| P1-D | Authoring & scaffolding tooling (`py2d-cartridge init` / new-cartridge command; align `project_gen`; update CLI surface and packaging) | Complete ✅ | Medium |
 | P1-E | Documentation & narrative leadership (README, DEVELOPER_ONBOARDING, PROJECT_ORGANIZATION lead with cartridges as primary model; elevate + cross-link existing guides) | Planned | Small-Medium |
 | P1-F | Manifest completeness & enforcement (engine version requirement checking at load; minor schema/loader sync) | Planned | Small |
 | P1-G | Reference Cartridge Validation (tgl_demo as the canonical proof point exercising directory mode, archive pack/load, save providers, hot-restart UX, CollisionLayer, config, dev integration) | Partial (prior work) / In Progress | Medium |
@@ -250,6 +250,40 @@ This directly contradicts the "assets from cartridge take precedence" contract.
 ### Validation
 - End-to-end: run the init command (in a temp dir), cd into result, pack, run via main.py --cartridge, observe it starts and can be packaged again.
 - Update docs and the thin CARTRIDGE_VISION with the new command.
+
+### Progress / Rationale (workon-phase session)
+- **Protocol followed**: Commit of P1-C performed first (targeted `git add` of the 6 P1-C files + detailed multi-line message, post-commit status/log/show --stat confirming 585693c). Then `/workon-phase P1-D` per user. Full skill protocol: independent verification of every sentence in the P1-D Problem/Fix/AC/Validation (reads + greps + execution), rationale recorded in this block, no blind trust in the PHASE doc.
+- **Independent verification (pre-edit, selected excerpts)**:
+  - `tools/cli/project_gen.py`: `create_new_game` unconditionally wrote to `os.path.join(examples_dir, "games", safe_name)` (line ~63); generated a legacy flat `main.py` (full ShowBase subclass, direct engine imports, commented player setup, no cartridge.json, no python/ package, no manifest, no hooks, no SaveStateProvider). Top docstring and `main()` subparsers only knew `new-game`, `new-component` etc. No cartridge awareness.
+  - `tools/cli/cartridge_pack.py`: pure pack + ManifestValidator + ensure_structure (requires `config/cartridge.json` + assets mount + optional python_path); exposed as `py2d-cartridge` via pyproject.toml. No `init`, no `create_*` generation logic. `slugify` allowed `-` (which later broke Python dotted paths and the schema regex `^[A-Za-z0-9_.]+$`).
+  - `pyproject.toml:57`: `py2d-engine = "tools.cli.project_gen:main"` and `py2d-cartridge = "tools.cli.cartridge_pack:main"` — two separate CLIs, old generator was the only "new project" story.
+  - `examples/games/` contained only `__init__.py`; `examples/cartridges/tgl_demo/` was the sole real example of the correct layout (config/, python/<pkg>/entrypoint.py with initialize hook, assets/, components/ + systems/ under the package, README).
+  - Schema + loader expectations (via cartridge_pack ensure + tests) require dotted paths without hyphens for entrypoint and systems.register.
+  - Docs (PHASE1, CARTRIDGE_VISION, guides, DEVELOPER_ONBOARDING, PROJECT_ORGANIZATION) all described the gap exactly as written.
+- **Decision for P1-D**: Highest-leverage DX item left in PHASE1 Execution Priority. "py2d-cartridge init" is the natural UX (matches the pack command branding and the AC wording). Enhancing the existing pack CLI (with BC for `py2d-cartridge .`) + a thin delegation from project_gen satisfies both "add to the cartridge CLI" and "enhance project_gen + re-wire" suggestions without a broad CLI rewrite.
+- **Design decisions (recorded)**:
+  - Primary implementation in `cartridge_pack.py` (the py2d-cartridge entrypoint): added early dispatch for `init` (and `pack` subcommand for explicitness) while keeping the old positional source= behavior for `py2d-cartridge .`. New public `create_new_cartridge(name, target=None)`.
+  - Safe slug: `python_slug = slugify(...).replace("-", "_")` used for the top-level dir, the `python/<python_slug>/` package dir, the entrypoint dotted string, and systems.register. Human `name` kept pretty in the manifest.
+  - Generated tree exactly matches tgl_demo shape (config/cartridge.json with requires + systems.register, assets/, python/<slug>/ with entrypoint + components/ + systems/, README). Includes a real copied sprite (from engine assets/player.png via get_assets_dir + shutil) so "visible sprites" works immediately after init + pack + run (exercises P1-A RM).
+  - Happy-path demo in generated entrypoint: `def initialize(self, context):` (modern, post P1-C), registers a tiny SaveStateProvider on context.save_state_manager, spawns an entity with Transform + SpriteComponent (private asset path) + the generated PlayerComponent. A minimal `SimpleGameplaySystem` + `register(context)` lives in systems/ and is listed in the manifest.
+  - BC + deprecation: old `new-game` kept and now prints a warning steering to `py2d-cartridge init`. Added `new-cartridge` subcommand to project_gen that delegates to the real `create_new_cartridge` (import inside the handler).
+  - No new deps, no --template variants beyond the one minimal (stubbed per doc "optionally"), no changes to tgl_demo.
+  - Validation used real execution of the CLIs + pack + CartridgeLoader.load_directory (which fully exercises the initialize hook, context attachment, provider, entity creation, and manifest-driven system registration).
+- **Files changed**: tools/cli/cartridge_pack.py (major: dispatch, create_new_cartridge + templates, safe slug, asset copy, entrypoint that uses context + provider + sprite + component + system), tools/cli/project_gen.py (docstring, warning in new-game, new create_new_cartridge wrapper + subparser + wiring in commands dict), docs/guides/cartridge_loader_guide.md (added "Creating a new cartridge" section + examples).
+- **Rationale recorded here** per workon-phase skill.
+
+**Implementation & Validation notes (same session)**
+
+- Core changes landed exactly as designed.
+- Test results (captured live):
+  - `python -m tools.cli.cartridge_pack init "P1D Test" -o /tmp/...` → success, nice UX messages, correct tree (safe P1D_Test package, pretty name in manifest, systems.register, copied sprite attempt).
+  - Pack on the result → "Included 9 files", produced valid `.../dist/P1D-Test-0.1.0.car`.
+  - Programmatic `CartridgeLoader.load_directory(...)` → initialize printed messages, provider registered (flag True), context attached, 1 entity created with the private sprite + PlayerComponent, no exceptions, manifest name/version correct.
+  - Repeated runs after each generator bugfix (f-string {e} NameError from inner except, hyphen in dotted paths causing schema + import failure, tuple vs Vec2 for Collider) all resolved; final run printed the full success banner with "SUCCESS: initialize completed...".
+  - `py2d-engine new-cartridge` delegation path exercised (via -m tools.cli.project_gen).
+- tgl_demo (P1-G canary) untouched.
+- ACs met: `py2d-cartridge init` (and `py2d-engine new-cartridge`) produce a tree that packs cleanly and loads/runs via the launcher path with visible content setup + registered provider, zero manual edits after `init`.
+- Follow-on (P1-E etc.): the new scaffold can be referenced from top-level docs; later templates (shooter etc.) or asset pipeline integration can build on this.
 
 ## Track P1-E - Documentation & Narrative Leadership
 

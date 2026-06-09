@@ -72,16 +72,26 @@ python main.py --cartridge cartridges/guardian_legends.car --cartridge-extract /
 
 If loading fails, the engine logs the exception and falls back to the built-in demo entity.
 
+### Creating a new cartridge (P1-D)
+
+```bash
+py2d-cartridge init "My Awesome Game"
+cd my-awesome-game
+# Edit config/cartridge.json, python/.../entrypoint.py, drop art in assets/
+```
+
+The scaffold includes a working `config/cartridge.json`, a `python/<slug>/entrypoint.py` (using CartridgeContext), a tiny custom component + registered system, a SaveStateProvider example, and a private sprite asset so it renders immediately.
+
 ### Packaging a cartridge
 
-Use the new `py2d-cartridge` helper (or `python -m tools.cli.cartridge_pack`) from the root of a cartridge project that contains `config/cartridge.json`, an assets folder, and a python module tree:
+Use the `py2d-cartridge` helper (or `python -m tools.cli.cartridge_pack`) from the root of a cartridge project that contains `config/cartridge.json`, an assets folder, and a python module tree:
 
 ```bash
 # From cartridge workspace
-py2d-cartridge .
+py2d-cartridge .                 # pack (or: py2d-cartridge pack .)
 
 # Explicit output + overwrite
-py2d-cartridge . -o ../cartridges/guardian_legends.car --force
+py2d-cartridge . -o ../cartridges/my-game-0.1.0.car --force
 ```
 
 The packer performs the same JSON Schema validation as the runtime loader before emitting `dist/<name>-<version>.car`. Hidden build folders (`dist`, `build`, `__pycache__`, etc.) are skipped automatically; additional folders can be excluded via `--ignore foo`. Use `--dry-run` to validate a project without creating an archive.
