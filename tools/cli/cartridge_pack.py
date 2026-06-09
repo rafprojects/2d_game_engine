@@ -7,7 +7,9 @@ Examples:
     py2d-cartridge init my-first-game
     cd my-first-game
     py2d-cartridge .                 # (or: py2d-cartridge pack .)
-    python -m main --cartridge /path/to/my-first-game
+    python /path/to/2d_game_engine/main.py --cartridge /path/to/my-first-game
+    # (Run main.py from the 2d_game_engine source checkout; it is not installed
+    #  as a module, so `python -m main` will fail from a standalone cartridge dir.)
 
 See PHASE1_CARTRIDGE_SYSTEM_POLISH.md (P1-D) for the scaffolding track.
 """

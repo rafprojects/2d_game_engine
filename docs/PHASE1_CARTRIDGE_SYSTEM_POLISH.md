@@ -572,6 +572,60 @@ New comments and resolutions (grouped by theme; all targeted, no broad rewrites)
 
 All fixes are small, defensive, and/or doc-truthfulness only. They directly improve the cartridge system seams that P1 set out to polish. 18/18 cartridge tests pass post-edit (the tgl reference test now actually exercises archive load). Pre-push will re-run the suite on commit.
 
+**PR #4 Copilot Review - Fourth Round**
+
+After the third round of fixes + push, 6 new unresolved Copilot comments were received (on top of the previously resolved ones).
+
+Per git-address-comments skill:
+- Verified branch still matches via verify_pr_branch.
+- Fetched unresolved threads (include_outdated=true) — 6 new threads returned.
+- All 6 accepted immediately as valid (error-path leaks, stale comments from prior rounds, remaining runner-cmd docs, test CWD fragility).
+- Implemented targeted fixes (including non-trivial but scoped rollback logic in the two load paths).
+- Updated this PHASE1 block.
+- Re-ran `tests/unit/test_cartridge.py` (now 18/18, exercising the new rollback-protected paths via tgl pack+load_dir+load_archive).
+- Will commit/push/resolve threads, then ask user before any new Copilot review request.
+
+New comments and resolutions:
+
+**Robust failure handling for partial loads (P1-B lifecycle / the "already loaded" + tracker work from round 3):**
+
+1. **engine/cartridge/loader.py:117** (load_directory, post-mutation entry/hook section)
+   - Issue: After we insert to sys.path, record in _python_path_for, mount assets (if present) + record in _asset_root_for, and attach to ssm, a failure in instantiate / _run_entry_hook / _register_system_modules (or even later creation) means the cartridge is never put into self.loaded. Callers have no LoadedCartridge to pass to unload(), so the mutations (python path, asset mount, tracker dicts) are leaked. Same root cause applies to load_archive.
+   - Fix: After the python + asset decisions and tracker writes (but before ssm.attach + entry work), wrapped the risky section (ssm + instantiate + ctx + hooks + register + LoadedCartridge creation + self.loaded assignment) in try/except. On any exception: pop the two _xxx_for[name] entries, remove the inserted python path from sys.path if we added one for this load, and best-effort unmount the asset root we mounted (mirroring the cleanup logic in unload()). Re-raise. For the archive "assets directory missing" case (which occurs after python insert but before any asset mount for the name), added explicit pre-raise cleanup of the python insertion + tracker so even that early deliberate error path does not leak.
+   - Rationale: Accepted. This directly addresses the review feedback and makes the cartridge loader's mutation points safe even on error paths during the entrypoint transition work (P1-C) or manifest-driven registration. The try is narrowly around the post-mutation "do the cartridge wiring" work; normal success path and the "already loaded" guard are unaffected. Tests (including full tgl reference pack+load) continue to pass, and the rollback is best-effort (consistent with other error paths in unload/teardown).
+
+2. **engine/cartridge/loader.py:179** (load_archive)
+   - Same as #1, for the archive code path (which has the additional "assets missing" early exit after python mutation).
+   - Fix + Rationale: See #1 (the archive block received the symmetric try/except + pre-raise cleanup for the assets case + mounted_asset local for rollback).
+
+**Stale comment left from prior round's tgl .car work (P1-G):**
+
+3. **tests/unit/test_cartridge.py:448** (and surrounding comment block)
+   - Issue: A comment block (and the specific flagged line) still talked about "archive load currently raises 'assets directory missing'" and "known limitation", even though the previous round (and this one) made load_archive succeed for tgl via the .gitkeep, updated the actual test code to assert the successful load, and refreshed some comments. The stale text was now misleading.
+   - Fix: Removed the outdated "currently raises..." paragraph and the "we tolerate... limitation" language. Replaced with a short accurate note that the .gitkeep makes the archive dir present and load succeeds (full roundtrip exercised). The test already had the successful load_archive path; this just cleans the prose.
+   - Rationale: Accepted. Hygiene follow-up on the P1-G reference test changes.
+
+**Remaining runner command / -m main docs (continuation of round 3):**
+
+4. **docs/DEVELOPER_ONBOARDING.md:29**
+   - Issue: The "Run Your First Cartridge" quick-start in onboarding still showed `cd my-game; python -m main --cartridge .` (same packaging problem as the ones fixed in round 3 for README, pack CLI, project_gen, and the scaffold template).
+   - Fix: Updated to the reliable form + explanatory comment, matching the style used elsewhere in this round and the previous one.
+   - Rationale: Accepted. Completes the sweep of the obvious "after init" / quickstart surfaces.
+
+5. **tools/cli/cartridge_pack.py:11** (module docstring)
+   - Issue: The top-of-file Examples: in the cartridge_pack docstring still showed the `cd ... ; python -m main ...` form.
+   - Fix: Updated the example to use the full path to main.py + added a comment explaining the module situation (consistent with the success message and generated README we fixed).
+   - Rationale: Accepted. Docstring was the remaining internal example.
+
+**Test portability / CWD assumption (P1-G test):**
+
+6. **tests/unit/test_cartridge.py:415** (tgl_dir = Path("examples/...") in the reference test)
+   - Issue: Hard relative path from CWD. Fails (or resolves wrong) when pytest is run from a subdirectory, a different checkout layout, or certain CI setups.
+   - Fix: Changed to `Path(__file__).parent.parent.parent / "examples/cartridges/tgl_demo"` (stable relative to the test module location: tests/unit/ → tests/ → repo root). Added a comment explaining the traversal. Also fixed the path resolution bug that was introduced in the first attempt (off-by-one parents) and re-verified the test.
+   - Rationale: Accepted. Small but real improvement to test reliability for the canonical reference test added in P1-G. (The pack + load assertions inside the test now run under the corrected stable path.)
+
+All changes are small + defensive or doc/test hygiene. The loader rollback is the only non-trivial diff but is narrowly scoped to the exact failure mode the review described and preserves all existing success behavior (18/18 cartridge tests green, including the paths that now exercise the try/except success legs).
+
 ## Context & Progress So Far (Hybrid)
 
 - Substantial prior execution on the tgl_demo cartridge (hitbox derivation bound to visual sprites via helper + scale, player damage blink/tint, --dev-mode + colored collision overlays with proper LineSegs baking, hot-restart via cartridge entrypoint `.reset()`, clean shutdown path, CollisionLayer standardization, config-driven sizes/scales, guarded wiring to support repeated initialize/reset).

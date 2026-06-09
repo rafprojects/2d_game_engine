@@ -110,28 +110,50 @@ class CartridgeLoader:
             mounted_asset = str(assets_path)
         self._asset_root_for[manifest.name] = mounted_asset
 
-        if self.save_state_manager:
-            self.save_state_manager.attach_manifest(manifest)
+        # Protect against leaks on any failure during entrypoint work (instantiate,
+        # hooks, system registration). If anything here raises we roll back the
+        # sys.path insertion and asset mount we just performed for this cartridge
+        # name (plus the tracker entries) so that the caller cannot be left with
+        # un-unloadable global state. See also the symmetric logic in load_archive.
+        try:
+            if self.save_state_manager:
+                self.save_state_manager.attach_manifest(manifest)
 
-        entry_instance = self._instantiate_entrypoint(manifest)
-        ctx = self._make_context(manifest)
-        setattr(entry_instance, "context", ctx)
-        if self.save_state_manager:
-            setattr(entry_instance, "save_state_manager", self.save_state_manager)
-        self._run_entry_hook(entry_instance, manifest, ctx)
-        loaded_modules = self._register_system_modules(manifest, ctx)
+            entry_instance = self._instantiate_entrypoint(manifest)
+            ctx = self._make_context(manifest)
+            setattr(entry_instance, "context", ctx)
+            if self.save_state_manager:
+                setattr(entry_instance, "save_state_manager", self.save_state_manager)
+            self._run_entry_hook(entry_instance, manifest, ctx)
+            loaded_modules = self._register_system_modules(manifest, ctx)
 
-        context = LoadedCartridge(
-            manifest=manifest,
-            archive_path=directory_path,
-            extract_path=directory_path,
-            entry_instance=entry_instance,
-            system_modules=loaded_modules,
-            save_state_manager=self.save_state_manager,
-        )
+            context = LoadedCartridge(
+                manifest=manifest,
+                archive_path=directory_path,
+                extract_path=directory_path,
+                entry_instance=entry_instance,
+                system_modules=loaded_modules,
+                save_state_manager=self.save_state_manager,
+            )
 
-        self.loaded[manifest.name] = context
-        return context
+            self.loaded[manifest.name] = context
+            return context
+        except Exception:
+            # Rollback mutations performed for this name on failure.
+            self._python_path_for.pop(manifest.name, None)
+            self._asset_root_for.pop(manifest.name, None)
+            if inserted_py and inserted_py in sys.path:
+                try:
+                    sys.path.remove(inserted_py)
+                except ValueError:
+                    pass
+            if mounted_asset and self.resource_manager is not None:
+                try:
+                    if hasattr(self.resource_manager, "unmount_asset_root"):
+                        self.resource_manager.unmount_asset_root(mounted_asset)
+                except Exception:
+                    pass  # best-effort during error recovery
+            raise
 
     def load_archive(self, archive_path: str | os.PathLike[str]) -> LoadedCartridge:
         archive_path = Path(archive_path)
@@ -166,34 +188,65 @@ class CartridgeLoader:
         self._python_path_for[manifest.name] = inserted_py
 
         assets_path = extract_dir / manifest.assets.mount_path
+        mounted_asset = None
         if assets_path.exists():
             self._mount_assets(assets_path)
-            self._asset_root_for[manifest.name] = str(assets_path)
+            mounted_asset = str(assets_path)
+            self._asset_root_for[manifest.name] = mounted_asset
         else:
+            # Python path (if any) was inserted for this name; clean it up before
+            # raising so we don't leave an orphaned sys.path entry + tracker.
+            if inserted_py and inserted_py in sys.path:
+                try:
+                    sys.path.remove(inserted_py)
+                except ValueError:
+                    pass
+            self._python_path_for.pop(manifest.name, None)
             raise CartridgeLoadError(f"Cartridge assets directory missing: {assets_path}")
 
-        if self.save_state_manager:
-            self.save_state_manager.attach_manifest(manifest)
+        # Protect against leaks on any failure during entrypoint work (instantiate,
+        # hooks, system registration). Roll back sys.path + asset mount + trackers
+        # for this name. (The assets-missing case above already handled its python
+        # cleanup.)
+        try:
+            if self.save_state_manager:
+                self.save_state_manager.attach_manifest(manifest)
 
-        entry_instance = self._instantiate_entrypoint(manifest)
-        ctx = self._make_context(manifest)
-        setattr(entry_instance, "context", ctx)
-        if self.save_state_manager:
-            setattr(entry_instance, "save_state_manager", self.save_state_manager)
-        self._run_entry_hook(entry_instance, manifest, ctx)
-        loaded_modules = self._register_system_modules(manifest, ctx)
+            entry_instance = self._instantiate_entrypoint(manifest)
+            ctx = self._make_context(manifest)
+            setattr(entry_instance, "context", ctx)
+            if self.save_state_manager:
+                setattr(entry_instance, "save_state_manager", self.save_state_manager)
+            self._run_entry_hook(entry_instance, manifest, ctx)
+            loaded_modules = self._register_system_modules(manifest, ctx)
 
-        context = LoadedCartridge(
-            manifest=manifest,
-            archive_path=archive_path,
-            extract_path=extract_dir,
-            entry_instance=entry_instance,
-            system_modules=loaded_modules,
-            save_state_manager=self.save_state_manager,
-        )
+            context = LoadedCartridge(
+                manifest=manifest,
+                archive_path=archive_path,
+                extract_path=extract_dir,
+                entry_instance=entry_instance,
+                system_modules=loaded_modules,
+                save_state_manager=self.save_state_manager,
+            )
 
-        self.loaded[manifest.name] = context
-        return context
+            self.loaded[manifest.name] = context
+            return context
+        except Exception:
+            # Rollback mutations performed for this name on failure.
+            self._python_path_for.pop(manifest.name, None)
+            self._asset_root_for.pop(manifest.name, None)
+            if inserted_py and inserted_py in sys.path:
+                try:
+                    sys.path.remove(inserted_py)
+                except ValueError:
+                    pass
+            if mounted_asset and self.resource_manager is not None:
+                try:
+                    if hasattr(self.resource_manager, "unmount_asset_root"):
+                        self.resource_manager.unmount_asset_root(mounted_asset)
+                except Exception:
+                    pass  # best-effort during error recovery
+            raise
 
     def unload(self, name_or_context: str | LoadedCartridge | None = None) -> bool:
         """Unload a previously loaded cartridge by name or LoadedCartridge instance.

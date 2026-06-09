@@ -25,7 +25,8 @@ python main.py --cartridge examples/cartridges/tgl_demo
 # Create a new one with the scaffold (P1-D)
 py2d-cartridge init "My Game"
 cd my-game
-python -m main --cartridge .
+python /path/to/2d_game_engine/main.py --cartridge .   # run from the engine source checkout root
+# (main.py is not an importable module; `python -m main` only works from the engine tree)
 ```
 
 `tgl_demo` is the canonical reference exercising the complete cartridge surface (manifest, pack/load, hot-restart, providers, dev tooling, etc.). Use it to validate your understanding and as the model for new work.

@@ -411,7 +411,10 @@ def test_tgl_demo_pack_produces_valid_archive_and_exercises_reference_surface(tm
     other tests, exercises the full pack → load .car → provider → reset cycle
     for the canonical reference.
     """
-    tgl_dir = Path("examples/cartridges/tgl_demo")
+    # Resolve relative to this test file so the path is stable even when pytest is
+    # invoked from a different working directory (e.g. from repo root or CI).
+    # tests/unit/ -> tests/ -> repo root, so three .parent traversals.
+    tgl_dir = Path(__file__).parent.parent.parent / "examples/cartridges/tgl_demo"
     assert tgl_dir.exists(), "reference cartridge directory must exist"
 
     out_car = tmp_path / "tgl_demo_ref.car"
@@ -439,12 +442,10 @@ def test_tgl_demo_pack_produces_valid_archive_and_exercises_reference_surface(tm
     assert "_TGLDemoSaveProvider" in entry_src or "register_provider" in entry_src
     assert "save_state_manager" in entry_src
 
-    # Load smoke: prefer load_directory on the real tgl source (assets optional
-    # in dir mode per loader; archive load currently raises "assets directory
-    # missing" because tgl_demo sprites still live in the engine root — see its
-    # README Packaging Note and the known limitation for full self-contained .car).
-    # This still exercises the reference tree + manifest + entrypoint surface.
-    # Full initialize hits real Panda (window etc.); we tolerate that for Dummy.
+    # Load smoke for the reference (both paths). The .gitkeep under assets/sprites/
+    # ensures the archive contains the declared mount dir so load_archive succeeds.
+    # Sprites resolve via engine precedence. We tolerate Panda init errors for the
+    # Dummy loader (full GUI runs are manual).
     loader = CartridgeLoader(
         world=DummyWorld(),
         base=DummyBase(),
