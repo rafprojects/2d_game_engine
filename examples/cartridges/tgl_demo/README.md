@@ -21,9 +21,9 @@ python main.py --cartridge examples/cartridges/tgl_demo
 `tgl_demo` is the **canonical reference cartridge** for the Phase 1 polished cartridge system. It exercises:
 
 - `cartridge.json` with `requires.engine`, `assets.mount`, `systems.register`, metadata.
-- Directory mode (dev) **and** packed `.car` (via `py2d-cartridge`).
+- Directory mode (dev) **and** packed `.car` (via `py2d-cartridge`; a `.gitkeep` under `assets/sprites/` ensures the declared assets mount dir is present in the archive so `load_archive` succeeds).
 - `CartridgeContext` (legacy hook signature for compatibility) + `.context` attachment.
-- Private asset overlay via ResourceManager (P1-A).
+- Private asset overlay via ResourceManager (P1-A; tgl_demo currently relies on engine asset fallbacks for sprites, with the local `assets/` present for the mount contract and future private assets).
 - Custom components + systems under `python/tgl/`.
 - Visual-bound hitboxes (`get_visual_size` + `compute_hitbox_size`).
 - `CollisionLayer` + `mask_of` (standard engine layers).
@@ -38,12 +38,13 @@ python main.py --cartridge examples/cartridges/tgl_demo
 # Development (fast iteration, live edits)
 python main.py --cartridge examples/cartridges/tgl_demo --dev-mode
 
-# Pack as self-contained cartridge (exercises archive path)
+# Pack as self-contained cartridge (exercises archive path + full load_archive roundtrip)
 py2d-cartridge examples/cartridges/tgl_demo
 # or from inside the cartridge dir:
 # py2d-cartridge . -o ../../dist/tgl_demo-0.1.0.car --force
 
-# Run the packed .car (behaves like directory mode for assets + code)
+# Run the packed .car (behaves like directory mode; assets/ dir present via placeholder
+# so the loader does not raise "assets directory missing").
 python main.py --cartridge dist/tgl_demo-0.1.0.car --dev-mode
 ```
 

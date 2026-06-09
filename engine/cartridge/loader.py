@@ -81,13 +81,25 @@ class CartridgeLoader:
 
         self._check_engine_requirement(manifest)
 
+        if manifest.name in self.loaded:
+            raise CartridgeLoadError(
+                f"Cartridge '{manifest.name}' is already loaded. "
+                "Call loader.unload(name) (or the LoadedCartridge) before loading it again."
+            )
+
         python_path = directory_path / manifest.python_path
-        inserted_py = None
-        if python_path.exists() and python_path.is_dir():
-            path_str = str(python_path)
-            if path_str not in sys.path:
-                sys.path.insert(0, path_str)
-                inserted_py = path_str
+        inserted_py = self._python_path_for.get(manifest.name)
+        if inserted_py is None:
+            # Only decide/insert if we have no prior record for this cartridge name.
+            # Prevents losing track of an inserted path on re-load attempts (the
+            # "already loaded" guard above catches most double-load cases).
+            if python_path.exists() and python_path.is_dir():
+                path_str = str(python_path)
+                if path_str not in sys.path:
+                    sys.path.insert(0, path_str)
+                    inserted_py = path_str
+                # else: already present on sys.path (user-managed or prior); we record None
+            # else: no python/ dir; record None (we inserted nothing)
         self._python_path_for[manifest.name] = inserted_py
 
         # Assets are optional in directory mode — sprites may be served from CWD.
@@ -107,7 +119,7 @@ class CartridgeLoader:
         if self.save_state_manager:
             setattr(entry_instance, "save_state_manager", self.save_state_manager)
         self._run_entry_hook(entry_instance, manifest, ctx)
-        loaded_modules = self._register_system_modules(manifest)
+        loaded_modules = self._register_system_modules(manifest, ctx)
 
         context = LoadedCartridge(
             manifest=manifest,
@@ -132,13 +144,25 @@ class CartridgeLoader:
 
         self._check_engine_requirement(manifest)
 
+        if manifest.name in self.loaded:
+            raise CartridgeLoadError(
+                f"Cartridge '{manifest.name}' is already loaded. "
+                "Call loader.unload(name) (or the LoadedCartridge) before loading it again."
+            )
+
         python_path = extract_dir / manifest.python_path
-        inserted_py = None
-        if python_path.exists() and python_path.is_dir():
-            path_str = str(python_path)
-            if path_str not in sys.path:
-                sys.path.insert(0, path_str)
-                inserted_py = path_str
+        inserted_py = self._python_path_for.get(manifest.name)
+        if inserted_py is None:
+            # Only decide/insert if we have no prior record for this cartridge name.
+            # Prevents losing track of an inserted path on re-load attempts (the
+            # "already loaded" guard above catches most double-load cases).
+            if python_path.exists() and python_path.is_dir():
+                path_str = str(python_path)
+                if path_str not in sys.path:
+                    sys.path.insert(0, path_str)
+                    inserted_py = path_str
+                # else: already present on sys.path (user-managed or prior); we record None
+            # else: no python/ dir; record None (we inserted nothing)
         self._python_path_for[manifest.name] = inserted_py
 
         assets_path = extract_dir / manifest.assets.mount_path
@@ -157,7 +181,7 @@ class CartridgeLoader:
         if self.save_state_manager:
             setattr(entry_instance, "save_state_manager", self.save_state_manager)
         self._run_entry_hook(entry_instance, manifest, ctx)
-        loaded_modules = self._register_system_modules(manifest)
+        loaded_modules = self._register_system_modules(manifest, ctx)
 
         context = LoadedCartridge(
             manifest=manifest,
@@ -218,8 +242,11 @@ class CartridgeLoader:
                 try:
                     try:
                         hook(context=teardown_ctx)
-                    except TypeError:
-                        hook(world=self.world, base=self.base, manifest=loaded.manifest)
+                    except TypeError as e:
+                        if "unexpected keyword argument 'context'" in str(e):
+                            hook(world=self.world, base=self.base, manifest=loaded.manifest)
+                        else:
+                            raise
                 except Exception as e:
                     print(f"⚠️  {hook_name} hook for cartridge '{name}' raised: {e}")
                 break
@@ -240,6 +267,19 @@ class CartridgeLoader:
                 sys.path.remove(py_path)
             except ValueError:
                 pass  # Already gone or was never there
+
+        # 3.5 Best-effort: unregister any SaveStateProvider registered under this
+        # cartridge's name (so a later re-load of the same name succeeds without
+        # "already registered"). Cartridges may register under manifest.name or a
+        # custom key; we try the cartridge name (used by tgl_demo reference and
+        # recommended). The per-cartridge try/except guard in initialize is still
+        # good defense for the case where a provider was registered under a
+        # different key.
+        if self.save_state_manager:
+            try:
+                self.save_state_manager.unregister_provider(name)
+            except Exception:
+                pass  # not present, never registered, or manager doesn't support (idempotent)
 
         # 4. Drop the record
         del self.loaded[name]
@@ -464,16 +504,25 @@ class CartridgeLoader:
                 # implement `def initialize(self, context): ...` only). Fall back to
                 # the legacy three-kw call so existing cartridges (e.g. tgl_demo)
                 # continue to work unchanged during the short transition.
+                # Only fall back on the specific "unexpected keyword argument 'context'"
+                # case; real TypeErrors raised inside the hook body are re-raised
+                # (prevents masking bugs and avoids double execution of partial side effects).
                 try:
                     hook(context=ctx)
-                except TypeError:
-                    hook(world=self.world, base=self.base, manifest=manifest)
+                except TypeError as e:
+                    if "unexpected keyword argument 'context'" in str(e):
+                        hook(world=self.world, base=self.base, manifest=manifest)
+                    else:
+                        raise
                 break
 
-    def _register_system_modules(self, manifest: CartridgeManifest) -> List[str]:
+    def _register_system_modules(
+        self, manifest: CartridgeManifest, context: Optional["CartridgeContext"] = None
+    ) -> List[str]:
         loaded = []
-        # Build once for the cartridge; all its system register fns share the same context.
-        ctx = self._make_context(manifest)
+        # Use the caller's context (so initialize hook and system registers see the
+        # *same* CartridgeContext instance). Fall back to a fresh one only if not provided.
+        ctx = context or self._make_context(manifest)
         for dotted in manifest.system_modules:
             try:
                 module = importlib.import_module(dotted)
@@ -483,9 +532,14 @@ class CartridgeLoader:
             register_fn = getattr(module, "register", None)
             if callable(register_fn):
                 # Same transition support as entry hooks: context-first then legacy.
+                # Only fall back on the specific "unexpected keyword" case so that real
+                # TypeErrors inside the register fn are not swallowed.
                 try:
                     register_fn(context=ctx)
-                except TypeError:
-                    register_fn(world=self.world, base=self.base)
+                except TypeError as e:
+                    if "unexpected keyword argument 'context'" in str(e):
+                        register_fn(world=self.world, base=self.base)
+                    else:
+                        raise
             loaded.append(dotted)
         return loaded

@@ -281,7 +281,9 @@ def _cmd_init(argv: List[str] | None = None) -> int:
         print_info("Next steps:")
         print(f"  cd {created}")
         print("  py2d-cartridge .                 # pack to dist/<name>-<ver>.car")
-        print(f"  python -m main --cartridge {created}   # run directly (or use full path to your main.py)")
+        print(f"  python /path/to/2d_game_engine/main.py --cartridge {created}")
+        print_info("  (Run the above from the 2d_game_engine source checkout; main.py is not")
+        print_info("   installed as an importable module under the package distribution.)")
         print_info("The generated entrypoint uses the modern CartridgeContext (P1-C) and registers a SaveStateProvider.")
         print_info("A small sprite asset was copied in so it renders something visible immediately.")
         return 0
@@ -564,9 +566,11 @@ A cartridge built with the 2D Game Engine (scaffolded via `py2d-cartridge init`)
 # From inside this directory
 py2d-cartridge .                 # validate + pack to dist/{slug}-0.1.0.car
 
-# Run (from anywhere)
-python -m main --cartridge {cartridge_dir}
-# or: python /path/to/2d_game_engine/main.py --cartridge .
+# Run (from the 2d_game_engine source checkout root that contains main.py;
+# main.py is not part of the installed package distribution, so `python -m main`
+# will not work from a standalone cartridge directory):
+python /path/to/2d_game_engine/main.py --cartridge {cartridge_dir}
+# or: cd /path/to/2d_game_engine && python main.py --cartridge /abs/path/to/this/cartridge
 ```
 
 Hotkeys (when host supports --dev-mode): R/F5 = hot restart, V = toggle collision viz, ESC = clean exit.

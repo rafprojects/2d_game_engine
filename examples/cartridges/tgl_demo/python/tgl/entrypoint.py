@@ -212,8 +212,11 @@ class TGLDemo:
                     # Demo only — real cartridges would apply to player component / world state.
                     pass
 
-            ssm.register_provider("tgl_demo", _TGLDemoSaveProvider(self.world))
-            self._tgl_provider_registered = True
+            try:
+                ssm.register_provider("tgl_demo", _TGLDemoSaveProvider(self.world))
+                self._tgl_provider_registered = True
+            except Exception as e:
+                print("  (provider already registered or ssm not ready: " + str(e) + ")")
 
     # ------------------------------------------------------------------
     # Collision handling

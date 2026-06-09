@@ -1,0 +1,14 @@
+# Placeholder to ensure the `assets/` tree (declared in cartridge.json) is
+# represented in packed .car archives.
+#
+# rglob + zip in the packer only includes *files*; without at least one file
+# under assets/, extractall would not create the assets/ directory, causing
+# load_archive to raise "Cartridge assets directory missing".
+#
+# tgl_demo keeps its real sprites in the engine's asset roots (precedence
+# after P1-A) and uses this dir only for the mount contract / future private
+# assets. The scaffold creates either a player.png or .gitkeep for the same
+# reason.
+#
+# This makes `py2d-cartridge tgl_demo` produce a .car that fully roundtrips
+# (load_archive succeeds and behaves like directory mode for the reference).

@@ -108,7 +108,9 @@ def create_new_cartridge(game_name):
         print_info("Pack & run:")
         print(f"  cd {created}")
         print("  py2d-cartridge .")
-        print(f"  python -m main --cartridge {created}")
+        print(f"  python /path/to/2d_game_engine/main.py --cartridge {created}")
+        print_info("  (Invoke from the 2d_game_engine source root; `python -m main` is not")
+        print_info("   available because main.py is not packaged as a module.)")
         return True
     except Exception as e:
         print_error(f"Could not create cartridge via py2d-cartridge logic: {e}")

@@ -424,11 +424,11 @@ def test_tgl_demo_pack_produces_valid_archive_and_exercises_reference_surface(tm
         namelist = zf.namelist()
         assert any(p.endswith("config/cartridge.json") for p in namelist)
         assert any("python/tgl/entrypoint.py" in p for p in namelist)
-        # Note: the current tgl_demo tree does not yet bundle its own sprite assets
-        # under its local assets/ (they live in the engine root and resolve via
-        # ResourceManager fallbacks post P1-A). See tgl_demo/README "Packaging Note".
-        # A complete self-contained .car would include them after a copy step.
-        # We assert the core (config + python) + that the pack succeeded.
+        # tgl_demo uses a .gitkeep under assets/sprites/ so the declared mount dir
+        # is present in the .car (packer only writes files; empty dirs are omitted).
+        # This makes load_archive succeed for the reference (full pack+archive roundtrip).
+        # Real sprites are resolved via engine asset precedence (P1-A) rather than
+        # bundled private copies. Core (config + python + assets placeholder) are asserted.
         # manifest should declare the engine requirement (now enforced by P1-F)
         manifest_data = json.loads(zf.read("config/cartridge.json"))
         assert manifest_data["cartridge"].get("requires", {}).get("engine") == "^0.1.0"
@@ -465,15 +465,17 @@ def test_tgl_demo_pack_produces_valid_archive_and_exercises_reference_surface(tm
     finally:
         _cleanup_modules()
 
-    # Archive path: expect the known assets-missing for current tgl tree (pack
-    # succeeded above; once sprites are copied into cartridge assets/ the .car
-    # will load the same way). We do not fail the reference test on this.
+    # Archive load for the reference: with the .gitkeep placeholder under
+    # assets/sprites/ the pack includes at least one file under the declared
+    # assets mount, so extract produces the dir and load_archive succeeds
+    # (full roundtrip for the canonical reference, as documented in its README
+    # and P1-G). Sprites still resolve via engine fallbacks (precedence) since
+    # tgl_demo keeps the majority of its art outside its private assets/.
     try:
         ctx2 = loader.load_archive(str(out_car))
         assert ctx2.manifest.name == "tgl_demo"
-    except CartridgeLoadError as e:
-        if "assets directory missing" not in str(e):
-            raise  # unexpected
+        assert ctx2.manifest.engine_requirement == "^0.1.0"
+        assert hasattr(ctx2.entry_instance, "reset")
     except Exception as e:
         if "win" not in str(e).lower() and "aspect" not in str(e).lower():
             raise

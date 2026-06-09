@@ -101,9 +101,10 @@ The packer performs the same JSON Schema validation as the runtime loader before
 `examples/cartridges/tgl_demo/` is the **canonical reference implementation** for the polished cartridge system:
 
 - Full `cartridge.json` (requires, systems.register, metadata, assets.mount).
-- Directory + archive (`.car`) roundtrip via `py2d-cartridge`.
+- Directory + archive (`.car`) roundtrip via `py2d-cartridge` (a `.gitkeep` placeholder under `assets/sprites/` ensures the declared mount dir exists after extract so `load_archive` succeeds cleanly).
 - Legacy hook compatibility + `CartridgeContext`.
-- Private assets, visual hitbox derivation, standard CollisionLayer usage.
+- Private assets mount (tgl_demo uses engine asset precedence for its sprites today; the local `assets/` satisfies the contract and demonstrates the mechanism).
+- Visual hitbox derivation, standard CollisionLayer usage.
 - `--dev-mode` integration with colored `PandaCollisionSystem` viz (blue/red/yellow).
 - Hot-restart via public `reset()` + guarded `_ensure_systems_and_events`.
 - `SaveStateProvider` registration demo.
@@ -113,7 +114,7 @@ Run it:
 
 ```bash
 python main.py --cartridge examples/cartridges/tgl_demo --dev-mode
-py2d-cartridge examples/cartridges/tgl_demo   # then load the produced .car
+py2d-cartridge examples/cartridges/tgl_demo   # produces .car with assets/ placeholder; load_archive succeeds (see tgl_demo/README "Packaging" + dev workflow)
 ```
 
 Its README documents the complete dev workflow, hotkeys, reset contract, and tuning. Use `tgl_demo` as the model and proof point when building or reviewing other cartridges. See `PHASE1_CARTRIDGE_SYSTEM_POLISH.md` (P1-G track) for validation criteria.

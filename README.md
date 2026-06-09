@@ -140,7 +140,9 @@ python main.py --cartridge examples/cartridges/tgl_demo
 py2d-cartridge init "My First Game"
 cd my-first-game
 py2d-cartridge .                 # pack (optional for dev)
-python -m main --cartridge .     # or full path to engine main.py
+python /path/to/2d_game_engine/main.py --cartridge .   # from the engine source root
+# (main.py is not installed as a module, so `python -m main` only works when
+#  run from inside the 2d_game_engine checkout)
 ```
 
 `tgl_demo` (`examples/cartridges/tgl_demo`) is the **canonical reference cartridge** for cartridge system validation (P1-G). It exercises the full modern surface end-to-end (manifest, dir + .car, context, assets, visual hitboxes, CollisionLayer, dev tooling, hot-restart via `reset()`, SaveStateProvider, etc.) and is the live canary for the loader and related polish.

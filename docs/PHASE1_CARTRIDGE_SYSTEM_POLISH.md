@@ -518,6 +518,60 @@ New comments and resolutions:
 
 All new fixes are small and preserve existing behavior where no RM/cartridge mounts are involved. Re-ran relevant tests mentally + will verify via pre-push on commit. These close the second round of Copilot feedback on PR #4.
 
+**PR #4 Copilot Review - Third Round (post second re-review request)**
+
+After the second round of fixes + push + Copilot re-review request, 12 additional unresolved Copilot comments (0 outdated) were received on the updated PR.
+
+Per git-address-comments skill (repeat of protocol):
+- Verified branch still matches (feat/phase1-cartridge-system-polish) via verify_pr_branch.
+- Fetched unresolved threads (include_outdated=true) + copilot comments; 12 threads, 9 prior resolved_skipped.
+- All 12 accepted as valid (pointed out real robustness/docs/consistency gaps in the P1 loader + scaffold + reference positioning).
+- Implemented via precise edits + one new placeholder file.
+- Extended this rationale block in PHASE1.
+- Ran full `tests/unit/test_cartridge.py` (18/18 passed, including now-exercised tgl archive load).
+- Will commit/push/resolve the 12 threads (ask user re: explicit request_pr_review for cost).
+
+New comments and resolutions (grouped by theme; all targeted, no broad rewrites):
+
+**Loader robustness (P1-B/C/F, directly from the dual-sig + lifecycle work):**
+
+1-3. **engine/cartridge/loader.py** (multiple locations)
+   - 1. (line ~470) `_run_entry_hook` (and peer sites in register + teardown) used bare `except TypeError:` for the context= vs legacy fallback. This swallows real TypeErrors from inside user hook code and can cause partial double execution.
+     - Fix: Changed all three sites to `except TypeError as e: if "unexpected keyword argument 'context'" in str(e): <legacy> else: raise`. Also added the same pattern to the new teardown path.
+     - Rationale: Accepted. Directly implements the review suggestion. Keeps the transition compat for tgl_demo (legacy initialize) while making the mechanism safe.
+   - 2. (line ~489 area) Multiple distinct `CartridgeContext` objects created per load (one for entry.initialize/.context, a fresh one inside `_register_system_modules` for each systems.register, and again in unload for teardown). Cartridge code that mutates the context object during initialize would not see the mutations from register hooks.
+     - Fix: `load_directory` and `load_archive` now create `ctx = self._make_context(manifest)` once, pass the *same* instance to `_run_entry_hook(..., ctx)` (already) and to `_register_system_modules(manifest, ctx)`. Updated the register helper to accept optional `context=...` (falls back to make only if None) and use it for all its register_fns. (Teardown continues to make a fresh one as it is post-unload and rarely relies on prior mutations.)
+     - Rationale: Accepted. Small high-value polish to the context feature (P1-C). Ensures the "one context per loaded cartridge" contract the review asked for.
+   - 3. (line ~92) `_python_path_for[manifest.name] = None` (overwrite) when the cartridge's python dir was already on sys.path (or on re-load of same name without unload, or dir-then-archive for same logical name). Subsequent unload would pop None and leave the originally-inserted path, leaking on sys.path and breaking clean re-use.
+     - Fix: Added early guard in *both* load_directory and load_archive (right after manifest + engine req check): `if manifest.name in self.loaded: raise CartridgeLoadError("... already loaded. Call unload first.")`. Also made the inserted_py decision preserve a prior non-None record for the name when present. This prevents the overwrite scenario (the guard catches active double-loads) and documents the intent.
+     - Rationale: Accepted. The "prevent loading a cartridge name that's already loaded" option from the review is the right one for UX and state hygiene. The path tracking fix + guard closes a real lifecycle hole exposed by P1-B work. Unload test (which does unload between loads) continues to pass; we also added provider unregister in unload (see below).
+
+**Reference cartridge truthfulness for .car (P1-G + pack):**
+
+4-7. **tgl_demo/README.md**, **cartridge_loader_guide.md** (and related claims)
+   - Issues: Multiple places claimed `tgl_demo` supports full directory + archive roundtrip and "private assets", and gave instructions to `py2d-cartridge ...` then `python main.py --cartridge the.car`. But because package_cartridge only walks *files* (rglob, skip is_dir), an empty `assets/` (even if present in the source tree for git) produces no entries under assets/ in the .car; extractall leaves no assets/ dir; load_archive then hard-raises "Cartridge assets directory missing" (the require is intentional for archive self-containment). The unit test had a special tolerate path and comments acknowledging the limitation.
+     - Fix: Added `examples/cartridges/tgl_demo/assets/sprites/.gitkeep` (with explanatory comment) — exactly analogous to what the scaffold does when it has no player.png. This ensures at least one file under the declared assets mount is packed → extract creates the dir → load_archive succeeds for tgl. Updated the P1-G reference test to actually call + assert on `load_archive` for the tgl .car (removed the "expect missing" except + updated all the "current tree does not yet..." comments). Lightly edited the tgl README (dev workflow + "Cartridge Dev Loop" bullets) and the guide's "Reference Cartridge (P1-G)" + example command to accurately describe the situation (placeholder for dir presence; sprites via engine precedence; full roundtrip now works).
+     - Rationale: Accepted. This makes the P1-G AC ("produces a loadable .car that runs and behaves like the dir version") and the test/docs claims literally true with a one-file minimal addition. tgl_demo remains the canary; the .gitkeep is not "real art" and is the standard way to preserve the tree for packing. Tests now exercise the archive path end-to-end for the reference.
+
+**Scaffold / author UX for run instructions (P1-D):**
+
+8-10. **tools/cli/cartridge_pack.py**, **tools/cli/project_gen.py**, **README.md**
+   - Issues: After `py2d-cartridge init` (or `py2d-engine new-cartridge`) the printed next-steps and the README template inside the new cartridge, plus the top-level quickstart, all suggested `python -m main --cartridge ...` (or from inside the fresh cartridge dir). But pyproject only packages `engine*`, `tools*`, `examples*`; `main.py` lives at the repo root and is not importable as `-m main` once you're cd'ed into the new cartridge tree (or for an installed user). The command only works when the cwd is the engine checkout.
+     - Fix: Updated the four print sites + the f-string template for the generated cartridge's README.md to lead with the reliable form `python /path/to/2d_game_engine/main.py --cartridge <path>` (or the "cd to engine root && python main.py --cartridge /abs/to/cartridge" variant) and added clear parentheticals explaining why `-m main` is not available. The scaffold template already had an "or full path" comment; it is now the primary documented invocation.
+     - Rationale: Accepted. Pure doc/UX strings (no behavior change). Improves the "cartridge as primary authoring model" story from P1-D/E/G. A future console_script (`py2d-run`) would be nicer but would be a broader packaging change (moving main logic, pyproject.scripts entry); left as follow-on.
+
+**Provider re-registration hygiene (P1-G + P1-B unload):**
+
+11. **examples/cartridges/tgl_demo/python/tgl/entrypoint.py:216** (and loader unload)
+   - Issue: The tgl reference registers a named provider ("tgl_demo") under `if not _tgl_provider_registered`. The per-instance flag protects re-calling initialize() on the *same* entry object, but a fresh load (new entry instance) after an unload that did not unregister would hit the manager's `ensure(name not in ...)` and raise on the second load's register_provider. The scaffold guards its register with try/except; tgl did not for the cross-instance case.
+     - Fix: Wrapped tgl's `ssm.register_provider(...)` + flag set in the same `try: ... except Exception as e: print("(provider already... )")` pattern as the scaffold. Additionally (high-value, small): in `CartridgeLoader.unload`, after popping the py path, added best-effort `self.save_state_manager.unregister_provider(name)` (with bare except so it is idempotent and doesn't break unload if nothing was registered or ssm absent). This makes the lifecycle clean providers too.
+     - Rationale: Accepted. The guard makes the reference robust exactly like the generated scaffold. The unload addition is a natural completion of the P1-B cleanup (py path + assets + now providers) and reduces the chance of the error the review flagged.
+
+**Runner command in pack success / generated (same root cause as 8-10)**
+   - (Covered in 8-10 group; the pack.py:285 and 570 plus project_gen and top README were the concrete sites.)
+
+All fixes are small, defensive, and/or doc-truthfulness only. They directly improve the cartridge system seams that P1 set out to polish. 18/18 cartridge tests pass post-edit (the tgl reference test now actually exercises archive load). Pre-push will re-run the suite on commit.
+
 ## Context & Progress So Far (Hybrid)
 
 - Substantial prior execution on the tgl_demo cartridge (hitbox derivation bound to visual sprites via helper + scale, player damage blink/tint, --dev-mode + colored collision overlays with proper LineSegs baking, hot-restart via cartridge entrypoint `.reset()`, clean shutdown path, CollisionLayer standardization, config-driven sizes/scales, guarded wiring to support repeated initialize/reset).
