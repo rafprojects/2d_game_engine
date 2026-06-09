@@ -99,6 +99,25 @@ The `ColliderComponent` layer/mask system uses a bitfield convention that is
 not currently documented. Add an explanation (and constants file) so cartridge
 authors can set up collision matrices without guessing bit offsets.
 
+### D. Rust engine math / core layer (extensive spike required)
+Consideration surfaced during P2-A (core retro math primitives). Evaluate
+re-implementing performance-sensitive or determinism-critical primitives
+(fixed-point arithmetic, possibly later systems) as a Rust layer (PyO3 etc.)
+for optional acceleration or as a future engine foundation.
+
+**Status:** Deferred. Requires an *extensive spike* (build system changes,
+cross-platform wheel/CI, contributor ergonomics, packaging impact on pure-Py
+cartridges, comparison vs the pure-Python reference, synergy with PHASE3
+native plugin boundary) before any commitment or partial implementation.
+The P2-A reference implementation (pure Python) remains the supported path
+for the retro emergent layer.
+
+See the approved P2-A session plan for the full pros/cons/LOE analysis of
+native paths (C++ Panda expansion was scrapped; Rust via added layer is the
+only path worth future investigation).
+
 ---
+
+
 
 *(Broader Fidelity Profiles / Retro Authenticity items and remaining Native Plugin Boundary & FFI Readiness items (packaging, richer FFI, security sketch) were formalized into PHASE5_FIDELITY_RETRO_PRODUCTION.md tracks during Phase 5 planning and removed here to keep the FUTURE queue clean. See PHASE5 for the authoritative tracking.)*

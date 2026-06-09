@@ -8,7 +8,7 @@
 
 | Track | Description | Status | Effort |
 |-------|-------------|--------|--------|
-| P2-A | Core retro math primitives (`engine/retro/` package: fixed-point arithmetic, `FixedPointVec2`, `SubpixelTransformComponent` or equivalent precision-aware components) | Planned | Medium |
+| P2-A | Core retro math primitives (`engine/retro/` package: fixed-point arithmetic, `FixedPointVec2`, `SubpixelTransformComponent` or equivalent precision-aware components) | Complete ✅ | Medium |
 | P2-B | Reference quirk movement and collision systems (e.g. `NESStyleMovementSystem` or `QuirkMovementSystem` + collision resolver that intentionally applies and documents specific clipping/penetration/quirk rules) | Planned | Large |
 | P2-C | Opt-in / integration mechanism for the retro layer (fidelity profile hook, component/system flags, clean coexistence with default float/Vec2 paths so modern cartridges are unaffected) | Planned | Small-Medium |
 | P2-D | One or two small reference cartridges demonstrating a reproducible emergent mechanic (e.g. subpixel-enabled wall clip, momentum quirk, or documented classic glitch that only appears when the layer is active) | Planned | Medium |
@@ -73,6 +73,34 @@ Keep the implementation pure-Python, dependency-free, and well-tested for determ
 - Unit tests in `tests/unit/test_retro_math.py` (or under `tests/unit/retro/`) covering construction, arithmetic, quantization, edge cases, and conversion.
 - A small smoke test or example in the package that demonstrates subpixel positioning (e.g. repeated addition of a fractional velocity that would lose precision in float but is preserved here).
 - Import the new module from a cartridge without pulling in the rest of the retro layer.
+
+### Implementation (P2-A)
+**Status:** Complete (core deliverable shipped; follow-on Rust spike item recorded in FUTURE_TASKS.md per user direction).
+
+**Rationale / key decisions (documented per workon-phase skill requirement):**
+- Pure-Python reference implementation chosen for `engine/retro/` (FixedPoint + FixedPointVec2 in fixed_point.py; SubpixelTransformComponent in components.py). Matches PHASE2 explicit scope ("pure-Python, dependency-free, and well-tested for determinism"), the "reference" nature emphasized in the cartridge vision / AUDIT, and the "Medium" effort label.
+- Default `frac_bits=16` (Q16.16) with per-instance configurability. Provides useful sub-pixel resolution while keeping values practical; cartridges can pick 8/12/24 etc. for different retro feels.
+- Immutable value types (new instances on arith). Safer for ECS data, easier determinism reasoning, matches "number-like" semantics.
+- SubpixelTransformComponent is a *parallel* type (position via FixedPointVec2; rotation/scale stay float). No automatic sync or mutation of TransformComponent — coexistence / opt-in rules are P2-C work.
+- Vec2 interop (to_vec2 / from_vec2) + float round-tripping provided so the types are "usable as drop-in or parallel values for position/velocity".
+- All public functions have type hints (mandatory project directive).
+- Tests + smoke explicitly demonstrate the motivating "repeated fractional addition that stays exact on the fixed grid".
+- Verified non-interference: full `pytest tests/unit/` (80 tests) + integration (modulo one pre-existing unrelated failure in test_movement_system.py that was already broken before any retro code) all green. `from engine.retro import ...` works cleanly with zero side effects.
+- Panda3D C++ expansion path scrapped (infeasible, high LOE, violates reference/educative goals). Rust engine math layer recorded as deferred item in FUTURE_TASKS.md requiring "extensive spike" (see execution notes in the session plan.md).
+- This plan.md (the approved hard copy) plus the block here preserve the full context and decision record.
+
+**Files delivered:**
+- `engine/retro/__init__.py`, `fixed_point.py`, `components.py`
+- `tests/unit/test_retro_math.py` (10 tests exercising the AC + subpixel demo)
+
+**Verification performed (end-to-end per plan):**
+- Imports succeed at top level and submodule level.
+- Unit tests for the track pass.
+- Existing unit suite unaffected.
+- Smoke commands (accum + component creation) execute and produce exact expected quantized results.
+- Can be imported from a cartridge context without pulling other engine subsystems.
+
+Next tracks (P2-B onward) can now safely depend on these primitives.
 
 ## Track P2-B - Reference Quirk Movement & Collision Systems
 
