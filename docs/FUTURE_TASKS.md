@@ -98,3 +98,7 @@ for the walking sprites and any future hand-drawn animation.
 The `ColliderComponent` layer/mask system uses a bitfield convention that is
 not currently documented. Add an explanation (and constants file) so cartridge
 authors can set up collision matrices without guessing bit offsets.
+
+---
+
+*(Broader Fidelity Profiles / Retro Authenticity items and remaining Native Plugin Boundary & FFI Readiness items (packaging, richer FFI, security sketch) were formalized into PHASE5_FIDELITY_RETRO_PRODUCTION.md tracks during Phase 5 planning and removed here to keep the FUTURE queue clean. See PHASE5 for the authoritative tracking.)*
