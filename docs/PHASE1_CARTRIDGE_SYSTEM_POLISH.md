@@ -1,8 +1,8 @@
 # Phase 1 - Cartridge System Polish
 
-**Status:** In Progress (P1-A complete)  
+**Status:** In Progress (P1-A/B/C complete)  
 **Created:** 2026-06  
-**Last updated:** 2026-06 (P1-A implemented + verified per /workon-phase 1)
+**Last updated:** 2026-06 (P1-C implemented + verified per /workon-phase P1-C)
 
 ### Tracks
 
@@ -10,7 +10,7 @@
 |-------|-------------|--------|--------|
 | P1-A | Asset loading consistency (RenderSystem + other direct Panda loads route through ResourceManager so cartridge `assets/` mounts take priority) | Complete ✅ | Large (critical) |
 | P1-B | Loader lifecycle & isolation (unload/teardown hooks, sys.path or importlib hygiene, explicit cartridge removal) | Complete ✅ | Medium |
-| P1-C | CartridgeContext / EngineAPI facade (replace raw `(world, base, manifest)` hand-offs in hooks and register) | Planned | Medium |
+| P1-C | CartridgeContext / EngineAPI facade (replace raw `(world, base, manifest)` hand-offs in hooks and register) | Complete ✅ | Medium |
 | P1-D | Authoring & scaffolding tooling (`py2d-cartridge init` / new-cartridge command; align `project_gen`; update CLI surface and packaging) | Planned | Medium |
 | P1-E | Documentation & narrative leadership (README, DEVELOPER_ONBOARDING, PROJECT_ORGANIZATION lead with cartridges as primary model; elevate + cross-link existing guides) | Planned | Small-Medium |
 | P1-F | Manifest completeness & enforcement (engine version requirement checking at load; minor schema/loader sync) | Planned | Small |
@@ -191,6 +191,40 @@ This directly contradicts the "assets from cartridge take precedence" contract.
 - Update tgl_demo entrypoint (or a new minimal example) to accept the context form.
 - Run all cartridge-related tests + manual tgl load.
 - Add type hints / a small Protocol for the context.
+
+### Progress / Rationale (workon-phase session)
+- **Protocol followed**: User explicitly invoked `/workon-phase P1-C`. Per skill: phase+track clear from arg; re-verified all P1-C claims in the tracking doc via fresh independent reads/greps (loader.py full content + hook methods + unload + _make_context absence pre-edit; main.py _load_cartridge + _do_restart + Game wiring; tgl/entrypoint.py exact initialize signature and base/world usage + absence of any context usage; test_cartridge.py Dummy* + existing hook tests + P1-B teardown tests; engine/cartridge/ (no context.py, manifest.py, __init__.py, errors.py); cartridge_loader_guide.md exact current text on hooks + limitations; CARTRIDGE_VISION.md explicit callout of the gap; greps for all hook call sites / "CartridgeContext" (zero prior hits) / save/resource exposure patterns; confirmed setattr for ssm and getattr for rm on base). Claims in the Problem/Fix/AC/Validation sections were accurate (with the minor clarification that system `register(world, base)` receives no manifest today, only world+base).
+- **Why P1-C now**: P1-A (asset precedence) + P1-B (unload lifecycle) are complete and committed. P1-C is next in the documented Execution Priority (#2 with P1-B) and directly addresses the "raw hand-offs" and "no stable surface" gap called out in both the PHASE1 doc and the thin CARTRIDGE_VISION.md. It builds cleanly on the loader trackers and RM/SSM wiring from prior tracks. tgl_demo (P1-G canary) must remain unaffected.
+- **Independent verification (selected excerpts, pre-edit)**:
+  - loader.py: `_run_entry_hook` (312) and `_register_system_modules` (319) hard-coded the three (or two) kwargs; no context construction or attachment. `LoadedCartridge` already carried some of the pieces (manifest + ssm) but was never passed to hooks. `setattr(entry, "save_state_manager", ...)` + `getattr(base, "resource_manager", ...)` patterns confirmed in both load paths and tgl.
+  - tgl/entrypoint.py:62: `def initialize(self, world: World, base, manifest):` — stores self.world/self.base; heavy use of base (win, loader, aspect2d, accept, dev_mode attr) and world for ECS. No context awareness. Its reset() is called directly from main, not via loader hook.
+  - No `engine/cartridge/context.py`; `__init__.py` did not export any context type; guide still described only the legacy calling convention.
+  - Call sites: only inside loader (and test mocks + the one tgl def). main only orchestrates loader construction + stores the returned LoadedCartridge for .entry_instance access on restart.
+  - SaveStateManager and ResourceManager are already available on the Game and passed into CartridgeLoader (post P1-A/B).
+- **Design decisions (not blind copy; recorded for the executive record)**:
+  - New file `engine/cartridge/context.py`: minimal `@dataclass` (easy, slots-friendly with the manifest style) carrying exactly the six pieces listed in the Fix section (world, base, manifest, rm, ssm, loader). Added `.cartridge_name` convenience + rich docstring explaining the transition role of `.base`. Used `Any` for world/base + forward strings for the others + TYPE_CHECKING to keep runtime deps light and avoid cycles.
+  - Transition calling convention (core of "short transition" AC): in `_run_entry_hook`, `_register_system_modules`, and the teardown path in `unload`, do `try: hook(context=ctx) except TypeError: hook(world=..., ...)` (or equivalent for register/teardown). This lets a pure new-style `def initialize(self, context):` succeed on first attempt, while any legacy `def initialize(self, world, base, manifest):` (or `register(world, base)`) gets the unexpected-kw TypeError and falls back cleanly. Hybrid signatures also work. No inspect.signature (kept simple and no extra stdlib surface).
+  - Attachment: after `_instantiate_entrypoint`, always `ctx = self._make_context(manifest); setattr(entry_instance, "context", ctx)`. Kept the existing `setattr(..., "save_state_manager", ...)` for any cartridge code that expects the direct attr (transition hygiene). _run now accepts optional pre-built context to avoid pointless double construction.
+  - Helper `_make_context`: private, lives on the loader (has all the pieces at construction time). Called from load paths, hook runner, register, and unload teardown.
+  - Scope for this track: introduce the type + wiring + compat + one new unit test exercising a context-only hook + updates to the loader guide (boot flow, API, Known Limitations). **No changes** to main.py (its use of LoadedCartridge as "cartridge_context" for restart remains valid; the entry now also has .context), no changes to tgl_demo entrypoint (deliberate — it continues to exercise the legacy path as the live canary; a test fixture serves as the "new minimal example" per Validation), no change to LoadedCartridge dataclass (it is loader-internal tracking, distinct from the hook-time context object).
+  - Export: added to `engine/cartridge/__init__.py` and documented.
+  - Tests: extended the existing test module (added import + new `test_loader_passes_cartridge_context_and_supports_new_style_hook` that creates a tree, overwrites the entry with a context-only initialize that asserts isinstance(context, CartridgeContext), checks attachment, surfaces, and manifest name). Existing P1-B teardown and load tests continue to cover legacy paths.
+  - Rationale and decisions documented here per workon-phase skill requirement.
+- **Files expected to change (pre-impl)**: engine/cartridge/context.py (new), engine/cartridge/loader.py (hook calling + attachment + helper), engine/cartridge/__init__.py (export), docs/guides/cartridge_loader_guide.md (narrative + limitations), tests/unit/test_cartridge.py (new context-style test). PHASE1 doc itself for the progress block + table/status.
+
+**Implementation & Validation notes (same session)**
+
+- Core changes landed:
+  - `engine/cartridge/context.py`: new minimal dataclass + docs.
+  - `engine/cartridge/loader.py`: import + `_make_context`, updated `_run_entry_hook` (now accepts optional ctx, does context-first try + legacy fallback), same pattern in `_register_system_modules` and unload teardown dispatch, ctx construction + `setattr(entry, "context", ctx)` + ssm compat setattr in both load_directory and load_archive.
+  - `engine/cartridge/__init__.py`: added export of CartridgeContext.
+  - `docs/guides/cartridge_loader_guide.md`: updated boot flow step 4/5, Loader API description, and Known Limitations with explicit P1-C note + cross-link.
+  - `tests/unit/test_cartridge.py`: import + new test that forces a context-only hook implementation and asserts the full contract (type, attachment, values, manager exposure).
+- Test results: `pytest tests/unit/test_cartridge.py -q --tb=short` → 14 passed (original 13 post-P1-B + 1 new context-style hook test exercising `def initialize(self, context):`, `isinstance(..., CartridgeContext)`, `.context` attachment, manifest name, and manager surfaces). `python -m py_compile` on the four edited/new files: all OK. Import smoke (`from engine.cartridge import CartridgeContext, ...`) + minimal dataclass construction: PASS. No other unit tests impacted.
+- tgl_demo canary (P1-G): untouched on purpose. Its `initialize(self, world, base, manifest)` + heavy `base.` usage + custom `reset()` + guarded wiring continue to work exactly as before via the fallback path. This validates the "existing cartridges continue unchanged" AC in real code.
+- Manual / smoke: python -c "from engine.cartridge import CartridgeContext, CartridgeLoader; ..." + full cartridge test module. (Display not required for unit validation of the context surface.)
+- Follow-up (within phase or later): richer methods on context, Protocol form if desired, migration of more Panda access behind context in future, P1-D tooling can now generate context-style examples, P1-E docs can lead with the new surface.
+- Rationale recorded in this block per skill.
 
 ## Track P1-D - Authoring & Scaffolding Tooling
 

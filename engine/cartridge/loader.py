@@ -19,6 +19,7 @@ from jsonschema import Draft202012Validator
 
 from .errors import CartridgeLoadError, CartridgeValidationError
 from .manifest import CartridgeManifest
+from .context import CartridgeContext
 
 if TYPE_CHECKING:  # pragma: no cover
     from engine.save_state.manager import SaveStateManager
@@ -99,9 +100,11 @@ class CartridgeLoader:
             self.save_state_manager.attach_manifest(manifest)
 
         entry_instance = self._instantiate_entrypoint(manifest)
+        ctx = self._make_context(manifest)
+        setattr(entry_instance, "context", ctx)
         if self.save_state_manager:
             setattr(entry_instance, "save_state_manager", self.save_state_manager)
-        self._run_entry_hook(entry_instance, manifest)
+        self._run_entry_hook(entry_instance, manifest, ctx)
         loaded_modules = self._register_system_modules(manifest)
 
         context = LoadedCartridge(
@@ -145,9 +148,11 @@ class CartridgeLoader:
             self.save_state_manager.attach_manifest(manifest)
 
         entry_instance = self._instantiate_entrypoint(manifest)
+        ctx = self._make_context(manifest)
+        setattr(entry_instance, "context", ctx)
         if self.save_state_manager:
             setattr(entry_instance, "save_state_manager", self.save_state_manager)
-        self._run_entry_hook(entry_instance, manifest)
+        self._run_entry_hook(entry_instance, manifest, ctx)
         loaded_modules = self._register_system_modules(manifest)
 
         context = LoadedCartridge(
@@ -201,11 +206,16 @@ class CartridgeLoader:
         entry = loaded.entry_instance
 
         # 1. Optional teardown hook (symmetric naming to the load-side hooks)
+        # Use the same context-first + legacy fallback as load hooks (P1-C).
+        teardown_ctx = self._make_context(loaded.manifest)
         for hook_name in ("teardown", "unload", "cleanup"):
             hook = getattr(entry, hook_name, None)
             if callable(hook):
                 try:
-                    hook(world=self.world, base=self.base, manifest=loaded.manifest)
+                    try:
+                        hook(context=teardown_ctx)
+                    except TypeError:
+                        hook(world=self.world, base=self.base, manifest=loaded.manifest)
                 except Exception as e:
                     print(f"⚠️  {hook_name} hook for cartridge '{name}' raised: {e}")
                 break
@@ -309,15 +319,46 @@ class CartridgeLoader:
             raise CartridgeLoadError(f"Failed to instantiate entrypoint '{manifest.entrypoint}': {exc}") from exc
         return instance
 
-    def _run_entry_hook(self, entry_instance, manifest: CartridgeManifest):
+    def _make_context(self, manifest: CartridgeManifest) -> CartridgeContext:
+        """Construct a CartridgeContext for the current load state.
+
+        This centralizes exposure of world/base + the managers the loader was
+        constructed with (RM for assets, SaveStateManager, and self for future
+        self-unload).
+        """
+        return CartridgeContext(
+            world=self.world,
+            base=self.base,
+            manifest=manifest,
+            resource_manager=self.resource_manager,
+            save_state_manager=self.save_state_manager,
+            loader=self,
+        )
+
+    def _run_entry_hook(
+        self,
+        entry_instance,
+        manifest: CartridgeManifest,
+        context: CartridgeContext | None = None,
+    ):
+        ctx = context or self._make_context(manifest)
         for hook_name in ("mount", "load", "initialize"):
             hook = getattr(entry_instance, hook_name, None)
             if callable(hook):
-                hook(world=self.world, base=self.base, manifest=manifest)
+                # Transition strategy (P1-C): prefer context= (new cartridges can
+                # implement `def initialize(self, context): ...` only). Fall back to
+                # the legacy three-kw call so existing cartridges (e.g. tgl_demo)
+                # continue to work unchanged during the short transition.
+                try:
+                    hook(context=ctx)
+                except TypeError:
+                    hook(world=self.world, base=self.base, manifest=manifest)
                 break
 
     def _register_system_modules(self, manifest: CartridgeManifest) -> List[str]:
         loaded = []
+        # Build once for the cartridge; all its system register fns share the same context.
+        ctx = self._make_context(manifest)
         for dotted in manifest.system_modules:
             try:
                 module = importlib.import_module(dotted)
@@ -326,6 +367,10 @@ class CartridgeLoader:
 
             register_fn = getattr(module, "register", None)
             if callable(register_fn):
-                register_fn(world=self.world, base=self.base)
+                # Same transition support as entry hooks: context-first then legacy.
+                try:
+                    register_fn(context=ctx)
+                except TypeError:
+                    register_fn(world=self.world, base=self.base)
             loaded.append(dotted)
         return loaded

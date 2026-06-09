@@ -13,6 +13,7 @@ import pytest
 
 from engine.cartridge.loader import CartridgeLoadError, CartridgeLoader, CartridgeValidationError
 from engine.cartridge.manifest import CartridgeManifest
+from engine.cartridge.context import CartridgeContext
 from engine.save_state.manager import SaveStateManager
 from tools.cli import cartridge_pack
 
@@ -461,5 +462,66 @@ def test_loader_unload_unmounts_assets(tmp_path):
         assert any(recorded in call for call in rm.unmount_calls), (
             f"expected unmount of {recorded}, got {rm.unmount_calls}"
         )
+    finally:
+        _cleanup_modules()
+
+
+def test_loader_passes_cartridge_context_and_supports_new_style_hook(tmp_path):
+    """CartridgeContext is constructed, attached to entry as .context, and passed
+    as the `context` kwarg to initialize (new-style hook). Legacy hooks continue
+    to work via fallback (covered by other tests + tgl_demo canary).
+    """
+    cartridge_dir = tmp_path / "with_context"
+    cartridge_dir, _ = _create_cartridge_tree(cartridge_dir)
+
+    # Override the generated entrypoint with one that only accepts `context`
+    # (proves new cartridges can be written against CartridgeContext only).
+    python_root = cartridge_dir / "python"
+    main_py = python_root / "guardian" / "main.py"
+    _write_file(
+        main_py,
+        textwrap.dedent(
+            """
+            from engine.cartridge.context import CartridgeContext
+
+            class Cartridge:
+                def __init__(self):
+                    self.context_received = None
+                    self.manifest_name = None
+
+                def initialize(self, context):
+                    # New-style only signature
+                    if not isinstance(context, CartridgeContext):
+                        raise TypeError("expected CartridgeContext")
+                    self.context_received = context
+                    self.manifest_name = getattr(context.manifest, "name", None)
+                    # Exercise other surfaces
+                    _ = context.world
+                    _ = context.base
+                    if context.save_state_manager is not None:
+                        context.save_state_manager  # accessible
+                    if context.resource_manager is not None:
+                        context.resource_manager  # accessible
+            """
+        ).strip()
+        + "\n",
+    )
+
+    loader = CartridgeLoader(
+        world=DummyWorld(),
+        base=DummyBase(),
+        resource_manager=DummyResourceManager(),
+        extract_root=tmp_path / "extract_ctx",
+    )
+
+    try:
+        loaded = loader.load_directory(str(cartridge_dir))
+        entry = loaded.entry_instance
+
+        assert hasattr(entry, "context"), "entry should have .context attached"
+        assert isinstance(entry.context, CartridgeContext)
+        assert entry.context is entry.context_received
+        assert entry.manifest_name == "Test Cartridge"
+        assert loaded.manifest.name == "Test Cartridge"
     finally:
         _cleanup_modules()
