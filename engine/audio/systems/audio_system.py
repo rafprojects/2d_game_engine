@@ -77,8 +77,8 @@ class AudioSystem(System):
             if listener_comp and listener_comp.is_active and transform_comp:
                 # Update listener position
                 self.listener_position = Vec3(
-                    transform_comp.position.x,
-                    transform_comp.position.y,
+                    transform_comp.x,
+                    transform_comp.y,
                     0  # 2D games typically have Z=0
                 )
                 
@@ -116,8 +116,8 @@ class AudioSystem(System):
             
             if sound_comp and sound_comp.is_3d and transform_comp:
                 sound_pos = Vec3(
-                    transform_comp.position.x,
-                    transform_comp.position.y,
+                    transform_comp.x,
+                    transform_comp.y,
                     0
                 )
                 
@@ -253,8 +253,8 @@ class AudioSystem(System):
             transform_comp = self.world.get_component(entity_id, TransformComponent)
             if transform_comp:
                 sound_pos = Vec3(
-                    transform_comp.position.x,
-                    transform_comp.position.y,
+                    transform_comp.x,
+                    transform_comp.y,
                     0
                 )
                 if hasattr(audio_sound, 'set_3d_attributes'):

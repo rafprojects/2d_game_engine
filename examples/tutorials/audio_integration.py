@@ -21,7 +21,7 @@ from direct.showbase.ShowBase import ShowBase
 from direct.showbase.ShowBaseGlobal import globalClock
 from panda3d.core import Vec2, Vec3
 from engine.core.system import World
-from engine.core.components.transform_component import TransformComponent
+from engine.graphics.components.transform_component import TransformComponent
 from engine.graphics.components.sprite_component import SpriteComponent
 from engine.graphics.systems.render_system import RenderSystem
 from engine.input.components.input_component import InputComponent
@@ -98,7 +98,7 @@ class AudioTutorial(ShowBase):
         # Add transform component (for position)
         self.world.add_component(
             self.player.id,
-            TransformComponent(position=Vec2(0, 0), scale=Vec2(50, 50))
+            TransformComponent(x=0.0, y=0.0, scale_x=50.0, scale_y=50.0)
         )
         
         # Try to add visual component (optional if sprite exists)
@@ -212,7 +212,7 @@ class AudioTutorial(ShowBase):
             # Add position
             self.world.add_component(
                 entity.id,
-                TransformComponent(position=source["position"])
+                TransformComponent(x=source["position"].x, y=source["position"].y)
             )
             
             # Add 3D sound component
@@ -334,12 +334,13 @@ class AudioTutorial(ShowBase):
             
         # Apply movement
         if movement.length() > 0:
-            old_pos = transform_comp.position
-            transform_comp.position += movement
+            old_x, old_y = transform_comp.x, transform_comp.y
+            transform_comp.x += movement.x
+            transform_comp.y += movement.y
             
             # Show position change for 3D audio demonstration
-            if abs(old_pos.x - transform_comp.position.x) > 10 or abs(old_pos.y - transform_comp.position.y) > 10:
-                print(f"📍 Player position: ({transform_comp.position.x:.0f}, {transform_comp.position.y:.0f})")
+            if abs(old_x - transform_comp.x) > 10 or abs(old_y - transform_comp.y) > 10:
+                print(f"📍 Player position: ({transform_comp.x:.0f}, {transform_comp.y:.0f})")
 
 if __name__ == '__main__':
     print("🎓 Starting Audio Integration Tutorial...")

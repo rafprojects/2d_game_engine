@@ -1,0 +1,19 @@
+{
+  "cartridge": {
+    "name": "tgl_demo",
+    "version": "0.1.0",
+    "entrypoint": "tgl.entrypoint:TGLDemo",
+    "requires": {
+      "engine": "^0.1.0"
+    }
+  },
+  "assets": {
+    "mount": "assets",
+    "virtual_root": "tgl"
+  },
+  "python_path": "python",
+  "metadata": {
+    "title": "The Guardian Legend Demo",
+    "description": "Scrolling-shooter corridor mode proof-of-concept"
+  }
+}

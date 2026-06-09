@@ -2,7 +2,10 @@
 .git
 __pycache__/
 *.pyc
+.pytest_cache/
+.mypy_cache/
 .vscode/
+.claude/
 
 # old stuff for reference
 .reference 
@@ -10,9 +13,5 @@ __pycache__/
 # potentially sensitive files
 assets/music
 assets/soundfonts
+assets/sprites
 .copilot_guidelines.md
-
-# temporary skips
-docs/
-examples/
-tests/

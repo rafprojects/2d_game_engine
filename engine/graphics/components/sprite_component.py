@@ -1,50 +1,56 @@
+from __future__ import annotations
+
 from panda3d.core import Vec4
 from engine.core.component import Component
 
 class SpriteComponent(Component):
-    def __init__(self, image_path: str | None = None, sprite_sheet = None, layer: int = 0, 
-                 color: Vec4 = Vec4(1, 1, 1, 1), opacity: float = 1.0):
-        # Validation - allow None image_path for colored rectangles
-        if image_path is None and sprite_sheet is None:
-            # This is allowed for colored rectangles
-            pass
-        elif image_path is None and sprite_sheet is not None:
-            print("Warning: SpriteComponent with sprite_sheet should also have image_path for texture loading")
-        
-        if sprite_sheet is not None and image_path is None:
-            print("Warning: SpriteComponent with sprite_sheet should also have image_path for texture loading")
-        
-        # Validate layer
+    def __init__(self, image_path: str | None = None, sprite_sheet=None, layer: int = 0,
+                 color: Vec4 = Vec4(1, 1, 1, 1), opacity: float = 1.0,
+                 egg_animation_ranges: dict | None = None):
         if not isinstance(layer, int):
             raise TypeError("Layer must be an integer")
-        
-        # Validate opacity
         if not (0.0 <= opacity <= 1.0):
             raise ValueError("Opacity must be between 0.0 and 1.0")
-            
+
         self.image_path = image_path
-        self.layer = layer  # For sorting render order
+        self.layer = layer
         self.color = color
         self.opacity = opacity
-        self.panda_node = None  # To store the Panda3D NodePath once loaded
-        
-        # Animation properties
+        self.panda_node = None  # Panda3D NodePath once loaded
+
+        # UV sprite-sheet animation
         self.sprite_sheet = sprite_sheet
         self.current_animation = None
         self.current_frame_index = 0
         self.animation_time = 0.0
         self.is_playing = False
-    
+
+        # .egg SequenceNode animation — set by RenderSystem when a .egg model is loaded
+        self.egg_animation_ranges: dict = egg_animation_ranges or {}
+        self._egg_sequence_node = None  # panda3d SequenceNode reference
+
     def play_animation(self, animation_name: str, reset: bool = True):
-        """Play the specified animation with error handling"""
+        """Play a named animation. Dispatches to SequenceNode or UV sprite-sheet path."""
         if not animation_name:
             print("Error: Animation name cannot be empty")
             return False
-            
+
+        # .egg SequenceNode path
+        if self._egg_sequence_node is not None:
+            if animation_name not in self.egg_animation_ranges:
+                print(f"Error: Animation '{animation_name}' not found in egg_animation_ranges")
+                return False
+            start, end = self.egg_animation_ranges[animation_name]
+            self._egg_sequence_node.loop(True, start, end)
+            self.current_animation = animation_name
+            self.is_playing = True
+            return True
+
+        # UV sprite-sheet path
         if not self.sprite_sheet:
-            print(f"Error: Cannot play animation '{animation_name}' - no sprite sheet available")
+            print(f"Error: Cannot play animation '{animation_name}' - no sprite sheet or egg model available")
             return False
-            
+
         animation = self.sprite_sheet.get_animation(animation_name)
         if animation:
             self.current_animation = animation_name
@@ -57,10 +63,12 @@ class SpriteComponent(Component):
         else:
             print(f"Error: Animation '{animation_name}' not found in sprite sheet")
             return False
-    
+
     def stop_animation(self):
-        """Stop the current animation"""
+        """Stop the current animation."""
         self.is_playing = False
+        if self._egg_sequence_node is not None:
+            self._egg_sequence_node.stop()
     
     def resume_animation(self):
         """Resume the current animation if it was stopped"""

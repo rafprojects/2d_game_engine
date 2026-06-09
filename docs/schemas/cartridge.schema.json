@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rafprojects.dev/2dge/schemas/cartridge.schema.json",
+  "title": "2D Engine Cartridge Manifest",
+  "type": "object",
+  "required": [
+    "cartridge",
+    "assets"
+  ],
+  "properties": {
+    "cartridge": {
+      "type": "object",
+      "required": [
+        "name",
+        "version",
+        "entrypoint"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z-.]+)?$",
+          "description": "SemVer string"
+        },
+        "entrypoint": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.]+:[A-Za-z0-9_.]+$",
+          "description": "module:Class reference"
+        },
+        "requires": {
+          "type": "object",
+          "properties": {
+            "engine": {
+              "type": "string",
+              "description": "Engine version range"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "assets": {
+      "type": "object",
+      "required": [
+        "mount"
+      ],
+      "properties": {
+        "mount": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Relative folder inside archive containing assets"
+        },
+        "virtual_root": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "systems": {
+      "type": "object",
+      "properties": {
+        "register": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.]+$"
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "python_path": {
+      "type": "string",
+      "default": "python"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

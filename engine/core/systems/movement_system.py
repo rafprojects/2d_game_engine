@@ -47,20 +47,20 @@ class MovementSystem(System):
             movement.update_velocity(dt)
             
             # Apply movement to transform
-            transform.position += movement.current_velocity * dt
-            
+            transform.x += movement.current_velocity.x * dt
+            transform.y += movement.current_velocity.y * dt
+
             # Update tweening effects if available
             if TWEENING_AVAILABLE:
                 tween_comp = self.world.get_component(entity.id, MovementTweenComponent)
                 if tween_comp:
-                    # Update visual effects based on movement
-                    tween_comp.update_visual_position(transform.position, dt)
+                    tween_comp.update_visual_position(Vec2(transform.x, transform.y), dt)
                     tween_comp.update_movement_effects(movement.current_velocity, movement.is_moving, dt)
-                    
-                    # Apply visual transform to the actual transform for rendering
-                    # Note: This creates a separation between physics position and visual position
-                    transform.position = Vec2(tween_comp.visual_position)
-                    transform.scale = Vec2(tween_comp.visual_scale)
+
+                    transform.x = tween_comp.visual_position.x
+                    transform.y = tween_comp.visual_position.y
+                    transform.scale_x = tween_comp.visual_scale.x
+                    transform.scale_y = tween_comp.visual_scale.y
                     transform.rotation = tween_comp.visual_rotation
             
             # Optional: Clamp to screen bounds (adjust these values as needed)
@@ -89,8 +89,8 @@ class MovementSystem(System):
         min_x, max_x = -1.5, 1.5  # Adjust based on your screen aspect ratio
         min_y, max_y = -1.0, 1.0
         
-        transform.position.x = max(min_x, min(max_x, transform.position.x))
-        transform.position.y = max(min_y, min(max_y, transform.position.y))
+        transform.x = max(min_x, min(max_x, transform.x))
+        transform.y = max(min_y, min(max_y, transform.y))
     
     def apply_speed_effect(self, entity_id, effect_name: str, multiplier: float, duration: float):
         """

@@ -115,7 +115,7 @@ from panda3d.core import Vec2, loadPrcFileData
 
 # Engine imports
 from engine.core.system import World
-from engine.core.components.transform_component import TransformComponent
+from engine.graphics.components.transform_component import TransformComponent
 from engine.graphics.components.sprite_component import SpriteComponent
 from engine.graphics.systems.render_system import RenderSystem
 from engine.input.components.input_component import InputComponent
@@ -157,7 +157,7 @@ class {game_name.replace(' ', '').replace('-', '').replace('_', '')}Game(ShowBas
         
         # Example: Create a player entity
         # player = self.world.create_entity("player")
-        # self.world.add_component(player.id, TransformComponent(position=Vec2(0, 0)))
+        # self.world.add_component(player.id, TransformComponent(x=0.0, y=0.0))
         # 
         # # Add sprite if asset exists
         # player_sprite_path = os.path.join("assets", "player.png")
@@ -387,7 +387,7 @@ from panda3d.core import Vec2, loadPrcFileData
 
 # Engine imports
 from engine.core.system import World
-from engine.core.components.transform_component import TransformComponent
+from engine.graphics.components.transform_component import TransformComponent
 from engine.graphics.components.sprite_component import SpriteComponent
 from engine.graphics.systems.render_system import RenderSystem
 
@@ -421,7 +421,7 @@ class {example_name.replace(' ', '').replace('-', '').title()}(ShowBase):
         # Add your demo setup here
         # Example:
         # entity = self.world.create_entity("demo_entity")
-        # self.world.add_component(entity.id, TransformComponent(position=Vec2(0, 0)))
+        # self.world.add_component(entity.id, TransformComponent(x=0.0, y=0.0))
         
         print("Demo setup complete!")
     

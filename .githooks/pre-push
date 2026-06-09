@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -e
+
+echo "Running unit tests before push..."
+# Use python from PATH (supports venv activation or PYTHON override)
+PYTHON_BIN="${PYTHON:-python}"
+"$PYTHON_BIN" -m pytest tests/unit -q --tb=short
+
+echo "Tests passed."

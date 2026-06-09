@@ -18,6 +18,7 @@ from engine.input.input_bindings import InputBinding
 from engine.cartridge.loader import CartridgeLoader
 from engine.cartridge.errors import CartridgeError
 from engine.save_state.manager import SaveStateManager
+from engine.save_state.world_provider import WorldSaveProvider
 
 # Audio system imports
 try:
@@ -50,9 +51,22 @@ except ImportError:
     TWEENING_AVAILABLE = False
     MovementTweenComponent = None
 class Game(ShowBase):
-    def __init__(self, cartridge_path: str | None = None, extract_dir: str | None = None):
+    def __init__(self, cartridge_path: str | None = None, extract_dir: str | None = None, dev_mode: bool = False):
         ShowBase.__init__(self)
+        self.dev_mode = bool(dev_mode)
+        if self.dev_mode:
+            print("🛠️  Dev mode enabled (collision viz, debug features available)")
+            print("    Keys: V = toggle collision outlines, R/F5 = restart, ESC = quit cleanly")
         print("🎮 Game initialized with enhanced movement system!")
+
+        # Dev / quality-of-life input for shutdown and iteration
+        self.accept("escape", self._request_exit)
+        self.accept("window-close", self._request_exit)
+        self.accept("r", self._request_restart)
+        self.accept("R", self._request_restart)
+        self.accept("f5", self._request_restart)
+        self._restart_requested = False
+        self._exit_requested = False
         
         if TWEENING_AVAILABLE:
             print("✨ Visual tweening effects available!")
@@ -90,6 +104,9 @@ class Game(ShowBase):
         self.cartridge_loader = None
         self.cartridge_context = None
         self.save_state_manager = SaveStateManager(self.world, storage_root=Path("saves"))
+        # Built-in provider: persists ECS entities + component data out of the box.
+        # Cartridges may register additional providers under their own names.
+        self.save_state_manager.register_provider("world", WorldSaveProvider())
         if cartridge_path:
             loaded = self._load_cartridge(cartridge_path, extract_dir)
             if not loaded:
@@ -100,6 +117,44 @@ class Game(ShowBase):
 
         # Game loop task
         self.taskMgr.add(self.update_game, "update_game_task")
+
+    def _request_restart(self):
+        """Request a hot restart (works best for cartridges that implement .reset() on their entrypoint)."""
+        self._restart_requested = True
+
+    def _request_exit(self):
+        """Request a clean exit (bound to ESC and window manager close)."""
+        print("\n👋 Exit requested — shutting down cleanly...")
+        self._exit_requested = True
+        # Best-effort explicit cleanup of collision viz nodes etc. before Panda teardown
+        try:
+            for system in list(getattr(self.world, "systems", [])):
+                if hasattr(system, "cleanup"):
+                    system.cleanup()
+        except Exception:
+            pass
+        self.userExit()
+
+    def _do_restart(self):
+        """Perform the actual restart work (called from the game task to keep it on the main thread)."""
+        print("🔄 Restarting...")
+        cartridge_context = getattr(self, "cartridge_context", None)
+        entry = getattr(cartridge_context, "entry_instance", None) if cartridge_context else None
+        if entry is not None and hasattr(entry, "reset") and callable(getattr(entry, "reset")):
+            try:
+                entry.reset()
+                print("🔁 Cartridge reset complete.")
+                return
+            except Exception as e:
+                print(f"⚠️ Cartridge-provided reset failed: {e} — falling back to entity clear.")
+        # Fallback: just nuke entities (collision systems will clean their nodes via hooks).
+        # New player etc. will only appear if the cartridge or default demo re-spawns on its own.
+        try:
+            for eid in list(self.world.entities.keys()):
+                self.world.remove_entity(eid)
+            print("🧹 Entities cleared (no cartridge .reset handler was available).")
+        except Exception as e:
+            print(f"Restart fallback error: {e}")
 
     def _setup_default_demo(self):
         """Spawn the legacy demo entity if no cartridge is provided."""
@@ -212,7 +267,10 @@ class Game(ShowBase):
                 save_state_manager=self.save_state_manager,
                 extract_root=extract_path,
             )
-            self.cartridge_context = self.cartridge_loader.load_archive(cartridge_path)
+            if Path(cartridge_path).is_dir():
+                self.cartridge_context = self.cartridge_loader.load_directory(cartridge_path)
+            else:
+                self.cartridge_context = self.cartridge_loader.load_archive(cartridge_path)
             print(f"🧩 Loaded cartridge '{self.cartridge_context.manifest.name}' v{self.cartridge_context.manifest.version}")
             return True
         except CartridgeError as exc:
@@ -249,6 +307,13 @@ class Game(ShowBase):
     def update_game(self, task):
         # Access globalClock directly as it's part of ShowBase
         dt = globalClock.getDt()
+
+        # Handle requested hot-restart (R / F5) before the normal frame.
+        if getattr(self, "_restart_requested", False):
+            self._restart_requested = False
+            self._do_restart()
+            return task.cont
+
         self.world.update(dt)
         
         # Update global tween manager if tweening is available
@@ -308,7 +373,29 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="2D Panda3D Engine Launcher")
     parser.add_argument("--cartridge", help="Path to a cartridge archive", default=None)
     parser.add_argument("--cartridge-extract", help="Directory used for cartridge extraction cache", default=None)
+    parser.add_argument(
+        "--dev-mode", "--dev",
+        action="store_true",
+        dest="dev_mode",
+        help="Enable developer/debug mode. For cartridges that support it (e.g. tgl_demo), "
+             "this turns on visual collision hitboxes with per-layer colors (blue=player, red=enemies, yellow=bullets). "
+             "Keys: V=toggle viz, R/F5=restart cartridge, ESC=quit cleanly."
+    )
     args = parser.parse_args()
 
-    app = Game(cartridge_path=args.cartridge, extract_dir=args.cartridge_extract)
-    app.run()
+    app = Game(
+        cartridge_path=args.cartridge,
+        extract_dir=args.cartridge_extract,
+        dev_mode=args.dev_mode,
+    )
+    try:
+        app.run()
+    except KeyboardInterrupt:
+        print("\n🛑 KeyboardInterrupt — requesting clean shutdown...")
+        try:
+            app.userExit()
+        except Exception:
+            pass
+        # Fast exit: some Panda threads (audio, etc.) can otherwise delay process death for seconds.
+        import sys as _sys
+        _sys.exit(0)
