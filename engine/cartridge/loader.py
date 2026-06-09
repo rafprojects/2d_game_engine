@@ -408,8 +408,10 @@ class CartridgeLoader:
                 cur_parts = [int(x) for x in current_version.split(".")[:2] if x.isdigit()]
                 if len(base_parts) >= 2 and len(cur_parts) >= 2:
                     if base_parts[0] == 0:
-                        # ^0.1.0 intent: same major 0, minor >= base minor
-                        return cur_parts[0] == 0 and cur_parts[1] >= base_parts[1]
+                        # ^0.1.0 (caret on 0.x) intent per semver: >=0.1.0 <0.2.0
+                        # i.e. stay on the same minor series; do not allow 0.2.*
+                        # (important when packaging.parse fallback is used).
+                        return cur_parts[0] == 0 and cur_parts[1] == base_parts[1]
                     return cur_parts[0] >= base_parts[0]
             except Exception:
                 pass

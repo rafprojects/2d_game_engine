@@ -442,6 +442,51 @@ This directly contradicts the "assets from cartridge take precedence" contract.
 - Hot-restart (R) / clean exit (ESC) / V viz continue to work (no loader changes affecting tgl paths; dev support inside tgl unchanged).
 - Rationale recorded here per workon-phase skill. PHASE1 now complete.
 
+**PR #4 Copilot Review Comments Addressed**
+
+This PR (containing the full PHASE1 work on branch feat/phase1-cartridge-system-polish) received 6 unresolved Copilot review comments. Per git-address-comments skill protocol:
+
+- Verified branch matches PR head (feat/phase1-cartridge-system-polish).
+- Fetched all unresolved threads (include_outdated=true) via git-pr-tools.
+- Addressed each immediately with fixes + rationale below.
+- Changes implemented via precise edits.
+- Added this rationale block to PHASE1 doc.
+- (Will commit + push + resolve threads + request review per skill.)
+
+Comments and resolutions (all accepted as valid issues introduced or exposed by the PHASE1 changes):
+
+1. **tools/cli/project_gen.py:116** (fallback hint literal "{game_name}")
+   - Issue: string not f-string, so users see literal placeholder instead of their game_name.
+   - Fix: changed to f-string `f"Alternative: run `py2d-cartridge init \"{game_name}\"` directly."`
+   - Rationale: Accepted. Simple bug in the error path for the new-cartridge delegation (P1-D). Improves UX for legacy path users.
+
+2. **tools/cli/cartridge_pack.py:363** (shutil used but not imported)
+   - Issue: shutil.copy in the sprite copy path for scaffold (P1-D), but no `import shutil` at top → runtime failure on `py2d-cartridge init` when engine sprite available.
+   - Fix: added `import shutil` near other stdlib imports.
+   - Rationale: Accepted. Clear omission in the P1-D scaffolding code. The try block was intended to use it.
+
+3. **tools/cli/cartridge_pack.py:366** (empty player.png placeholder)
+   - Issue: writing b"" for fallback placeholder will cause loadTexture / loadModel failures at runtime for new cartridges.
+   - Fix: replaced with hardcoded minimal valid 1x1 PNG bytes (red pixel) so scaffold produces runnable content even if engine assets/ not present. Added comment explaining.
+   - Rationale: Accepted. Improves the "runs out-of-the-box" goal of the init scaffold (P1-D). Empty file was a TODO marker; now a functional tiny asset.
+
+4. **engine/cartridge/loader.py:412** (caret fallback too permissive)
+   - Issue: in _requirement_satisfied fallback (when packaging unavailable), the 0.x logic `cur[1] >= base[1]` for ^0.1.0 would accept 0.2.* (and higher), defeating the point of the engine_requirement check (P1-F).
+   - Fix: changed 0.x case to `cur_parts[0] == 0 and cur_parts[1] == base_parts[1]` (exact minor match for the ^0.minor series per semver caret pre-1.0 semantics). Updated comment for clarity.
+   - Rationale: Accepted. Important correctness fix for the conservative fallback path in P1-F. Matches real packaging.SpecifierSet behavior for ^0.1.0 (<0.2.0).
+
+5. **examples/cartridges/tgl_demo/python/tgl/entrypoint.py:199** (capture missing world arg)
+   - Issue: SaveStateProvider.capture is invoked by SaveStateManager as `provider.capture(world)`. The inline _TGLDemoSaveProvider (added for P1-G reference completeness) defined `def capture(self):` → would TypeError on actual use.
+   - Fix: changed to `def capture(self, world):` (body continues to use self.world from __init__; arg accepted per protocol).
+   - Rationale: Accepted. The P1-G addition of the provider to make tgl_demo the full reference was incomplete w.r.t. the SaveStateProvider Protocol (from manager.py and world_provider). Matches the scaffold generator and MockProvider in tests.
+
+6. **examples/cartridges/tgl_demo/python/tgl/entrypoint.py:210** (restore missing args)
+   - Issue: restore called as `provider.restore(world, payload)`. Defined as `def restore(self, data):` → mismatch.
+   - Fix: changed to `def restore(self, world, payload):` + updated docstring. (payload used instead of data for consistency with protocol.)
+   - Rationale: Accepted. Same root cause as #5. Required for any restore_state call on a cartridge that registered the provider. tgl_demo now correctly implements the interface as the canonical example.
+
+All fixes are small, targeted, and preserve the P1 intent (tgl_demo as canary with minimal surface addition, no broad rewrites). Tests (cartridge suite) will be re-run before commit. This addresses the PR feedback surfaced on the accumulated PHASE1 changes.
+
 ## Context & Progress So Far (Hybrid)
 
 - Substantial prior execution on the tgl_demo cartridge (hitbox derivation bound to visual sprites via helper + scale, player damage blink/tint, --dev-mode + colored collision overlays with proper LineSegs baking, hot-restart via cartridge entrypoint `.reset()`, clean shutdown path, CollisionLayer standardization, config-driven sizes/scales, guarded wiring to support repeated initialize/reset).

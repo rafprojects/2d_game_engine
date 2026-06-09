@@ -194,7 +194,9 @@ class TGLDemo:
                 def __init__(self, world):
                     self.world = world
 
-                def capture(self):
+                def capture(self, world):
+                    # world arg required by SaveStateManager / SaveStateProvider protocol
+                    # (we keep self.world from __init__ for simplicity)
                     data = {"cartridge": "tgl_demo", "version": "0.1.0"}
                     # Capture live player state if present (score / lives from PlayerComponent)
                     for eid in list(self.world.entities):
@@ -205,7 +207,8 @@ class TGLDemo:
                             break
                     return data
 
-                def restore(self, data):
+                def restore(self, world, payload):
+                    # Args required by protocol: world + payload.
                     # Demo only — real cartridges would apply to player component / world state.
                     pass
 

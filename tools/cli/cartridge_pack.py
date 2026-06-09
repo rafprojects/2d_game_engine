@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
 import zipfile
 from pathlib import Path
@@ -362,8 +363,14 @@ def create_new_cartridge(name: str, target: str | Path | None = None) -> Path:
         if src.exists():
             shutil.copy(src, assets_dir / "player.png")
         else:
-            # fallback tiny marker (user can replace)
-            (assets_dir / "player.png").write_bytes(b"")  # placeholder; real runs will want art
+            # fallback tiny valid 1x1 PNG (red) so scaffold runs out-of-the-box
+            # without texture load errors. User can replace with real art.
+            tiny_png = (
+                b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+                b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00"
+                b"\x00\x01\x01\x00\x05\xfe\xdc\xdc\x00\x00\x00\x00IEND\xaeB`\x82"
+            )
+            (assets_dir / "player.png").write_bytes(tiny_png)
     except Exception:
         (assets_dir / ".gitkeep").write_text("", encoding="utf-8")
 

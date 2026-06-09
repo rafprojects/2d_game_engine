@@ -112,7 +112,7 @@ def create_new_cartridge(game_name):
         return True
     except Exception as e:
         print_error(f"Could not create cartridge via py2d-cartridge logic: {e}")
-        print_info("Alternative: run `py2d-cartridge init \"{game_name}\"` directly.")
+        print_info(f"Alternative: run `py2d-cartridge init \"{game_name}\"` directly.")
         return False
 
 def create_main_py_template(game_name, safe_name):
