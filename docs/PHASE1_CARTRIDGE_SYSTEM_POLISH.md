@@ -626,6 +626,42 @@ New comments and resolutions:
 
 All changes are small + defensive or doc/test hygiene. The loader rollback is the only non-trivial diff but is narrowly scoped to the exact failure mode the review described and preserves all existing success behavior (18/18 cartridge tests green, including the paths that now exercise the try/except success legs).
 
+**PR #4 Copilot Review - Fifth Round**
+
+After the fourth round of fixes + push, 3 new unresolved Copilot comments were received (on top of the 27 previously resolved).
+
+Per git-address-comments skill:
+- Verified branch still matches via verify_pr_branch (current: feat/phase1-cartridge-system-polish for PR #4).
+- Fetched unresolved threads (include_outdated=true) — 3 new threads returned (27 resolved_skipped).
+- All 3 accepted immediately as valid (correctness gaps in the P1-F caret handling for both primary packaging path and the no-packaging fallback; plus a fragile substring assertion in an RM test added for P1-A).
+- Implemented targeted fixes in loader.py (both caret converter and fallback) + test_resource_manager.py.
+- Updated this PHASE1 block with rationale.
+- Re-ran `tests/unit/test_resource_manager.py` (3/3) + `tests/unit/test_cartridge.py` (18/18 green, including the engine req tests that exercise ^0.1.0); plus direct python -c verification of the specific ^1.2.3 / ^0.1.9 / ^0.0.x cases the review called out.
+- Will commit/push/resolve the 3 threads. (Per skill + prior round note: no request_pr_review unless user explicitly asks in this round, due to per-use cost.)
+
+New comments and resolutions:
+
+**Caret version-range correctness for engine requirement checks (P1-F, both packaging and fallback paths):**
+
+1. **engine/cartridge/loader.py:515** (and surrounding fallback in _requirement_satisfied)
+   - Issue: The caret (^) version-range fallback logic is currently too permissive and can accept incompatible engine versions (e.g. `^1.2.3` would accept `2.x`, and `^0.1.9` would accept `0.1.0`) when `packaging` isn't available. Since `packaging` is not a declared runtime dependency, this fallback is likely to be used in real installs, so it should implement proper caret semantics: current_version must be >= base and < next breaking version (per semver rules, including the special 0.y.z behavior).
+   - Fix: Rewrote the caret block in the fallback to (a) pad+tuple-compare for >= base lower bound, (b) compute the correct upper bound depending on major / 0.y / 0.0.z cases, (c) reject if >= upper. Mirrored the intent of the primary path.
+   - Rationale: Accepted. Directly implements the review. The prior 0.x "exact minor match" (from round 1/2) was still too loose on patch lower-bound and the non-0 case was just `cur_major >= base_major` (allowed majors to increase). Now consistent with semver caret and with the (also-fixed) _caret_to_pep440.
+
+2. **engine/cartridge/loader.py:543** (_caret_to_pep440)
+   - Issue: `_caret_to_pep440()` currently expands `^0.0.x` to `<0.1.0`, but semver caret for `0.0.x` should only allow patch-level bumps (`<0.0.(x+1)`). This makes engine compatibility checks looser than intended for pre-0.1 ranges when `packaging` is available.
+   - Fix: Restructured the 0.x logic: if major>=1 bump major; elif second part (minor) >=1 bump that minor; else (0.0 series) use the third part (patch) for upper. Updated the docstring examples to cover ^0.2.3 and ^0.0.3. Guarded the startswith.
+   - Rationale: Accepted. Critical polish for P1-F enforcement correctness. The primary path (used whenever packaging is present, which is the common case even if not a hard dep) now produces correct PEP 440 ranges for all caret shapes. Manual verification post-edit confirmed ^0.0.5 -> >=0.0.5,<0.0.6 and the satisfy cases behave as intended.
+
+**Test assertion robustness (P1-A asset overlay / ResourceManager):**
+
+3. **tests/unit/test_resource_manager.py:110** (and peer assert at ~101 in the same test)
+   - Issue: This test asserts overlay/base wins by checking whether the string "overlay"/"base" appears in the resolved path. That can produce false positives if the temp directory path happens to contain those substrings. Prefer asserting the resolved path is actually under the expected root directory.
+   - Fix: Replaced both substring checks with `Path(resolved).resolve().is_relative_to(overlay_dir.resolve())` (and symmetric for base after unmount). Added clear failure messages. Path was already imported.
+   - Rationale: Accepted. Improves reliability of the P1-A coverage test for resolve_asset_path (used by RenderSystem cartridge asset precedence). Eliminates a source of flaky or misleading passes in CI or unusual tmp layouts.
+
+All changes are small, localized, and improve the quality of the P1-F enforcement and P1-A test without altering success behavior for valid cartridges or existing tests (18/18 cartridge + RM tests remain green; caret cases now correctly enforced in both code paths).
+
 ## Context & Progress So Far (Hybrid)
 
 - Substantial prior execution on the tgl_demo cartridge (hitbox derivation bound to visual sprites via helper + scale, player damage blink/tint, --dev-mode + colored collision overlays with proper LineSegs baking, hot-restart via cartridge entrypoint `.reset()`, clean shutdown path, CollisionLayer standardization, config-driven sizes/scales, guarded wiring to support repeated initialize/reset).

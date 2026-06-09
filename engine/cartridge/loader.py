@@ -495,23 +495,37 @@ class CartridgeLoader:
             pass
 
         # Conservative fallback (no 'packaging' or parse error).
-        # Handle common caret ranges ^X.Y.Z for the 0.x series explicitly,
-        # otherwise do a loose "base appears in current or current starts with base".
+        # Implement proper caret semantics so ^1.2.3 rejects 2.x and ^0.1.9
+        # rejects 0.1.0 (and 0.2.*), matching the _caret_to_pep440 primary path
+        # and semver rules (incl. 0.0.x patch-only).
         if req.startswith("^"):
             base = req[1:].strip().split()[0]
             try:
-                base_parts = [int(x) for x in base.split(".")[:2] if x.isdigit()]
-                cur_parts = [int(x) for x in current_version.split(".")[:2] if x.isdigit()]
-                if len(base_parts) >= 2 and len(cur_parts) >= 2:
-                    if base_parts[0] == 0:
-                        # ^0.1.0 (caret on 0.x) intent per semver: >=0.1.0 <0.2.0
-                        # i.e. stay on the same minor series; do not allow 0.2.*
-                        # (important when packaging.parse fallback is used).
-                        return cur_parts[0] == 0 and cur_parts[1] == base_parts[1]
-                    return cur_parts[0] >= base_parts[0]
+                base_parts = [int(x) for x in base.split(".") if x.isdigit()]
+                cur_parts = [int(x) for x in current_version.split(".") if x.isdigit()]
+                if base_parts and cur_parts:
+                    def _pad(p, n=3):
+                        return (p + [0] * n)[:n]
+                    b = _pad(base_parts)
+                    c = _pad(cur_parts)
+                    # Must be >= base
+                    if c < b:
+                        return False
+                    # Upper bound: next breaking version
+                    if b[0] >= 1:
+                        upper = (b[0] + 1, 0, 0)
+                    elif b[1] >= 1:
+                        # 0.y.z y>=1
+                        upper = (0, b[1] + 1, 0)
+                    else:
+                        # 0.0.z
+                        upper = (0, 0, (b[2] + 1) if len(b) > 2 else 1)
+                    if c >= upper:
+                        return False
+                    return True
             except Exception:
                 pass
-            base = base  # fall through to contains check below
+            # fall through to loose contains for malformed caret
 
         base = req.lstrip("^~>=< ").strip().split()[0]
         if not base:
@@ -521,12 +535,13 @@ class CartridgeLoader:
     def _caret_to_pep440(self, req: str) -> str:
         """Convert a semver-style ^caret requirement to PEP 440 compatible range.
 
-        ^0.1.0  -> >=0.1.0,<0.2.0
-        ^0.1.9  -> >=0.1.9,<0.2.0
         ^1.2.3  -> >=1.2.3,<2.0.0
+        ^0.2.3  -> >=0.2.3,<0.3.0
+        ^0.0.3  -> >=0.0.3,<0.0.4
+        ^0.1.9  -> >=0.1.9,<0.2.0
         This lets packaging.SpecifierSet work for common manifest declarations.
         """
-        if not req.startswith("^"):
+        if not req or not req.startswith("^"):
             return req
         ver = req[1:].strip().split()[0]
         try:
@@ -534,12 +549,19 @@ class CartridgeLoader:
             if not parts:
                 return req
             major = parts[0]
-            if major == 0:
-                if len(parts) > 1:
-                    minor = parts[1]
-                    return f">={ver},<{major}.{minor + 1}.0"
-                return f">={ver},<1.0.0"
-            return f">={ver},<{major + 1}.0.0"
+            if major >= 1:
+                return f">={ver},<{major + 1}.0.0"
+            # 0.x series per semver caret:
+            # ^0.y.z (y >= 1) is >=0.y.z <0.(y+1).0
+            # ^0.0.z is >=0.0.z <0.0.(z+1)  (patch-only for 0.0)
+            if len(parts) >= 2 and parts[1] >= 1:
+                minor = parts[1]
+                return f">={ver},<0.{minor + 1}.0"
+            if len(parts) >= 3:
+                patch = parts[2]
+                return f">={ver},<0.0.{patch + 1}"
+            # degenerate 0 or 0.0
+            return f">={ver},<1.0.0"
         except Exception:
             return req
 
