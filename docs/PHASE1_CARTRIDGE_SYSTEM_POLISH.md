@@ -693,6 +693,47 @@ New comments and resolutions:
 
 All changes are small, defensive, and restore the intended "cartridge assets win for the paths authors actually write" (P1-A) + "init produces what the docs promise" (P1-D) behaviors. Unit tests + targeted manual verification (including roundtrip of the generated cartridge's asset path under its own mount) are green.
 
+**PR #4 Copilot Review - Seventh Round**
+
+After the sixth round of fixes + push, 4 new unresolved Copilot comments were received.
+
+Per git-address-comments skill:
+- Verified branch still matches via verify_pr_branch (feat/phase1-cartridge-system-polish for PR #4).
+- Fetched unresolved threads (include_outdated=true) — 4 new threads returned (32 resolved_skipped).
+- All 4 accepted immediately as valid (minor hygiene: unused import in the P1-D scaffold template; dead code + overly broad exception handling + case-sensitivity bug in the P1-G tgl reference test's DummyBase error filters).
+- Implemented targeted fixes (remove unused Component import from entrypoint template; remove unused py_paths_before var; tighten the two except blocks in test_tgl_demo_pack... to AttributeError + case-insensitive lowered checks, and make the filters consistent).
+- Updated this PHASE1 block with rationale.
+- Re-ran `tests/unit/test_cartridge.py` (18/18) + full `tests/unit/` (70/70 green). The pack/generator paths and tgl load smoke (both dir and archive under Dummy) continue to exercise the fixed surfaces.
+- Will commit/push/resolve the 4 threads. (Per skill + prior rounds: no request_pr_review unless user explicitly asks, due to per-use cost.)
+
+New comments and resolutions:
+
+**Scaffold template hygiene (P1-D):**
+
+1. **tools/cli/cartridge_pack.py:465** (entrypoint_code template)
+   - Issue: The scaffolded entrypoint template imports `Component` but never uses it. This produces unnecessary noise in generated cartridges and can trip linters/type-checkers.
+   - Fix: Removed the line `from engine.core.component import Component` from the entrypoint_code string. (The generated PlayerComponent lives in its own file and does the import there; the entrypoint only needs the concrete PlayerComponent + the engine sprite/transform/collider types.)
+   - Rationale: Accepted. Trivial cleanup that keeps generated cartridges clean. The rest of the happy-path demo (context, provider, sprite with private asset, PlayerComponent, reset) is unaffected.
+
+**Test hygiene in reference cartridge validation (P1-G):**
+
+2. **tests/unit/test_cartridge.py:373** (test_loader_unload_removes_python_path_and_loaded_entry)
+   - Issue: `py_paths_before` is computed but never used, which adds noise to the test and may trigger unused-variable linting in some setups.
+   - Fix: Removed the dead assignment. The subsequent asserts on loader.loaded, _python_path_for, unload behavior, and re-load remain (and were the actual intent).
+   - Rationale: Accepted. Simple noise removal in a P1-B/P1-G exercised test. No behavior change.
+
+3. **tests/unit/test_cartridge.py:465** (and surrounding in test_tgl_demo_pack_produces_valid_archive...)
+   - Issue: This exception filter is currently ineffective for `requestProperties` because you lowercase the exception string but compare against a mixed-case literal. Also, catching `Exception` here risks masking real loader/cartridge regressions (e.g. ImportError) and letting the test pass unexpectedly; restrict this to AttributeError (the expected failure mode with DummyBase).
+   - Fix: Changed the first load_directory try/except to `except AttributeError as e:`, compute `msg = str(e).lower()`, and check lowered literals ("requestproperties" etc.). Added explanatory comment. Kept the swallow logic only for the known Panda/Dummy init noise so the tgl smoke (which does real pack + load on Dummy) can still tolerate the environment.
+   - Rationale: Accepted. Directly addresses both parts of the report. Makes the filter actually work for the third string and narrows the catch to prevent hiding real problems in future.
+
+4. **tests/unit/test_cartridge.py:482** (the archive load try/except in the same tgl test)
+   - Issue: Same issue as above: catching `Exception` here can mask real failures and make the test pass for the wrong reason. With DummyBase, the expected failure mode is an AttributeError due to missing ShowBase attributes, so the handler should be limited to AttributeError.
+   - Fix: Applied the identical tightening + case-insensitive msg + full three-string filter (the second block was missing "requestProperties" entirely). Added matching comment.
+   - Rationale: Accepted. Completes the consistency for the two smoke paths (dir + archive) in the P1-G canonical reference test. Both now use the same safe, narrow, correct filter.
+
+All changes are small test/doc-generator hygiene items. They improve signal-to-noise for new cartridge authors (cleaner scaffolds) and for the reference test (more precise error tolerance that still lets the pack+load+reset surface be validated under Dummy). 18/18 cartridge tests + 70 unit tests remain green; the tgl pack/load smoke continues to pass (swallowing only the intended DummyBase AttributeErrors).
+
 ## Context & Progress So Far (Hybrid)
 
 - Substantial prior execution on the tgl_demo cartridge (hitbox derivation bound to visual sprites via helper + scale, player damage blink/tint, --dev-mode + colored collision overlays with proper LineSegs baking, hot-restart via cartridge entrypoint `.reset()`, clean shutdown path, CollisionLayer standardization, config-driven sizes/scales, guarded wiring to support repeated initialize/reset).

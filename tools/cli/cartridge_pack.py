@@ -462,7 +462,6 @@ Demonstrates the full happy path after P1-A/B/C:
 """
 from __future__ import annotations
 
-from engine.core.component import Component
 from engine.graphics.components.transform_component import TransformComponent
 from engine.graphics.components.sprite_component import SpriteComponent
 from engine.physics.components.collider_component import ColliderComponent

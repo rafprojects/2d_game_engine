@@ -370,7 +370,6 @@ def test_loader_unload_removes_python_path_and_loaded_entry(tmp_path):
         name = ctx.manifest.name
 
         # The python path for the cartridge should have been recorded and be on sys.path
-        py_paths_before = [p for p in sys.path if "cartridge" in p or name.lower() in p.lower()]
         assert name in loader.loaded
         assert loader._python_path_for.get(name) is not None
 
@@ -460,8 +459,12 @@ def test_tgl_demo_pack_produces_valid_archive_and_exercises_reference_surface(tm
         assert ctx.manifest.name == "tgl_demo"
         assert ctx.manifest.engine_requirement == "^0.1.0"
         assert hasattr(ctx.entry_instance, "reset")
-    except Exception as e:
-        if "win" not in str(e).lower() and "aspect" not in str(e).lower() and "requestProperties" not in str(e).lower():
+    except AttributeError as e:
+        # Swallow expected Panda/DummyBase init noise (no real display, missing ShowBase attrs).
+        # Restricted to AttributeError (the failure mode with DummyBase) to avoid masking
+        # real cartridge/loader errors (e.g. ImportError from bad code).
+        msg = str(e).lower()
+        if "win" not in msg and "aspect" not in msg and "requestproperties" not in msg:
             raise
     finally:
         _cleanup_modules()
@@ -477,8 +480,12 @@ def test_tgl_demo_pack_produces_valid_archive_and_exercises_reference_surface(tm
         assert ctx2.manifest.name == "tgl_demo"
         assert ctx2.manifest.engine_requirement == "^0.1.0"
         assert hasattr(ctx2.entry_instance, "reset")
-    except Exception as e:
-        if "win" not in str(e).lower() and "aspect" not in str(e).lower():
+    except AttributeError as e:
+        # Swallow expected Panda/DummyBase init noise (no real display, missing ShowBase attrs).
+        # Restricted to AttributeError (the failure mode with DummyBase) to avoid masking
+        # real cartridge/loader errors (e.g. ImportError from bad code).
+        msg = str(e).lower()
+        if "win" not in msg and "aspect" not in msg and "requestproperties" not in msg:
             raise
     finally:
         _cleanup_modules()
