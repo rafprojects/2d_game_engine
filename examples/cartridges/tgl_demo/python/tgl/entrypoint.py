@@ -88,9 +88,12 @@ class TGLDemo:
         bullet_path = os.path.join("assets", "sprites", "weapons", "bullet.egg")
         asteroid_path = os.path.join("assets", "sprites", "enemies", "asteroid", "asteroid.egg")
 
-        ship_vis = get_visual_size(ship_path, base.loader)
-        bullet_vis = get_visual_size(bullet_path, base.loader)
-        enemy_vis = get_visual_size(asteroid_path, base.loader)
+        # Pass resource_manager (available on the Game/base after cartridge load mounts assets)
+        # so the visual-size probe for hitbox derivation also respects cartridge-private assets.
+        rm = getattr(base, "resource_manager", None)
+        ship_vis = get_visual_size(ship_path, base.loader, rm)
+        bullet_vis = get_visual_size(bullet_path, base.loader, rm)
+        enemy_vis = get_visual_size(asteroid_path, base.loader, rm)
 
         p_scale = float(cfg["player"].get("scale", 1.0))
         b_scale = float(cfg["bullet"].get("scale", 0.25))
@@ -179,6 +182,41 @@ class TGLDemo:
         print("🧩 TGL demo ready. Derived hitboxes (scaled to sprite visuals) are active.")
         if not getattr(base, "dev_mode", False):
             print("   Tip: run with --dev-mode to auto-show colored collision hitbox outlines (blue/red/yellow; toggle with V). Press R or F5 to restart, ESC to quit.")
+
+        # Reference SaveStateProvider registration (P1-G canonical exercise of full surface:
+        # context/legacy, SSM attachment, provider capture for save/load scenarios).
+        # This makes tgl_demo demonstrate the complete modern cartridge features alongside
+        # its hot-restart guard, visual hitboxes, CollisionLayer, and dev tooling.
+        ssm = getattr(self, "save_state_manager", None)
+        if ssm is not None and not getattr(self, "_tgl_provider_registered", False):
+            class _TGLDemoSaveProvider:
+                """Minimal SaveStateProvider for the reference tgl_demo cartridge."""
+                def __init__(self, world):
+                    self.world = world
+
+                def capture(self, world):
+                    # world arg required by SaveStateManager / SaveStateProvider protocol
+                    # (we keep self.world from __init__ for simplicity)
+                    data = {"cartridge": "tgl_demo", "version": "0.1.0"}
+                    # Capture live player state if present (score / lives from PlayerComponent)
+                    for eid in list(self.world.entities):
+                        pc = self.world.get_component(eid, PlayerComponent)
+                        if pc:
+                            data["score"] = getattr(pc, "score", 0)
+                            data["lives"] = getattr(pc, "lives", 3)
+                            break
+                    return data
+
+                def restore(self, world, payload):
+                    # Args required by protocol: world + payload.
+                    # Demo only — real cartridges would apply to player component / world state.
+                    pass
+
+            try:
+                ssm.register_provider("tgl_demo", _TGLDemoSaveProvider(self.world))
+                self._tgl_provider_registered = True
+            except Exception as e:
+                print("  (provider already registered or ssm not ready: " + str(e) + ")")
 
     # ------------------------------------------------------------------
     # Collision handling

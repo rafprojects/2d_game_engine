@@ -11,11 +11,12 @@ from engine.core.events import ComponentRemovedEvent, EntityDestroyedEvent
 from engine.graphics.sprite_sheet import SpriteFrame
 
 class RenderSystem(System):
-    def __init__(self, world, base): 
+    def __init__(self, world, base, resource_manager=None): 
         super().__init__(world)
         self.base = base 
         self.aspect2d = base.aspect2d  # Use aspect2d instead of render2d for more reliable positioning
         self.loader = base.loader 
+        self.resource_manager = resource_manager  # Optional; when present, used for cartridge asset precedence via mount roots
         self.textures = {} 
         self.world.event_manager.subscribe(ComponentRemovedEvent, self.handle_sprite_component_removed)
         self.world.event_manager.subscribe(EntityDestroyedEvent, self.handle_entity_destroyed)
@@ -42,22 +43,40 @@ class RenderSystem(System):
             potential_node.removeNode()
 
     def _load_texture(self, image_path: str) -> Texture | None:
-        """Load and cache a texture with proper error handling"""
-        if image_path not in self.textures:
+        """Load and cache a texture with proper error handling.
+
+        When a ResourceManager with mounted cartridge asset roots is present,
+        the declared relative path is resolved against the layered roots first
+        (cartridge mounts win). The cache is keyed by the *actual loaded path*
+        (the resolved file) so that after unmount/switching cartridges the
+        same declared image_path can correctly load a different (or updated)
+        asset without returning a stale cached Texture from a previous mount.
+        """
+        load_path = image_path
+        if self.resource_manager is not None:
             try:
-                tex = self.loader.loadTexture(image_path)
+                resolved = self.resource_manager.resolve_asset_path(image_path)
+                if resolved:
+                    load_path = resolved
+            except Exception:
+                # Fall back to raw path on any resolution hiccup (keeps legacy demos working)
+                pass
+
+        if load_path not in self.textures:
+            try:
+                tex = self.loader.loadTexture(load_path)
                 if tex:
                     tex.setMagfilter(Texture.FTNearest)
                     tex.setMinfilter(Texture.FTNearest)
-                    self.textures[image_path] = tex
-                    print(f"Successfully loaded texture: {image_path}")
+                    self.textures[load_path] = tex
+                    print(f"Successfully loaded texture: {image_path} (resolved to {load_path})")
                 else:
                     print(f"Error: Could not load texture: {image_path}")
                     return None
             except Exception as e:
                 print(f"Error loading texture {image_path}: {e}")
                 return None
-        return self.textures[image_path]
+        return self.textures[load_path]
 
     def _create_sprite_node(self, entity_id: uuid.UUID, image_path: str,
                             sprite: SpriteComponent | None = None) -> NodePath | None:
@@ -92,9 +111,21 @@ class RenderSystem(System):
 
     def _create_egg_sprite_node(self, entity_id: uuid.UUID, image_path: str,
                                 sprite: SpriteComponent | None) -> NodePath | None:
-        """Load a Panda3D .egg model as a sprite and wire up its SequenceNode."""
+        """Load a Panda3D .egg model as a sprite and wire up its SequenceNode.
+
+        Respects ResourceManager mounted roots (cartridge assets first) when available,
+        using the same resolve logic as texture loads for consistency.
+        """
+        load_path = image_path
+        if self.resource_manager is not None:
+            try:
+                resolved = self.resource_manager.resolve_asset_path(image_path)
+                if resolved:
+                    load_path = resolved
+            except Exception:
+                pass
         try:
-            model = self.loader.loadModel(image_path)
+            model = self.loader.loadModel(load_path)
         except Exception as e:
             print(f"Error loading .egg model {image_path}: {e}")
             return None

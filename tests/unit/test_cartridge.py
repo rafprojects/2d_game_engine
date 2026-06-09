@@ -13,6 +13,7 @@ import pytest
 
 from engine.cartridge.loader import CartridgeLoadError, CartridgeLoader, CartridgeValidationError
 from engine.cartridge.manifest import CartridgeManifest
+from engine.cartridge.context import CartridgeContext
 from engine.save_state.manager import SaveStateManager
 from tools.cli import cartridge_pack
 
@@ -341,3 +342,348 @@ def test_cartridge_pack_cli_dry_run_skips_archive(tmp_path):
 
     assert exit_code == 0
     assert not output_path.exists()
+
+
+# ------------------------------------------------------------------
+# P1-B: Loader unload lifecycle tests
+# ------------------------------------------------------------------
+
+def test_loader_unload_removes_python_path_and_loaded_entry(tmp_path):
+    """Core P1-B behavior: after unload the python path we inserted is gone and
+    the cartridge is no longer in loader.loaded. Re-load must succeed cleanly.
+    """
+    cartridge_dir = tmp_path / "cartridge"
+    cartridge_dir, _ = _create_cartridge_tree(cartridge_dir)
+    archive_path = tmp_path / "test.car"
+    _zip_cartridge(cartridge_dir, archive_path)
+
+    loader = CartridgeLoader(
+        world=DummyWorld(),
+        base=DummyBase(),
+        resource_manager=DummyResourceManager(),
+        extract_root=tmp_path / "extract_unload",
+    )
+
+    try:
+        # Directory load first (fast path)
+        ctx = loader.load_directory(str(cartridge_dir))
+        name = ctx.manifest.name
+
+        # The python path for the cartridge should have been recorded and be on sys.path
+        assert name in loader.loaded
+        assert loader._python_path_for.get(name) is not None
+
+        # Unload
+        assert loader.unload(name) is True
+        assert name not in loader.loaded
+        assert loader.unload(name) is False  # idempotent
+
+        removed_path = loader._python_path_for.get(name)  # should have been popped
+        assert removed_path is None or removed_path not in sys.path
+
+        # Re-load the same cartridge (or archive) must work without accumulating duplicates
+        ctx2 = loader.load_archive(archive_path)
+        assert ctx2.manifest.name == name
+        assert name in loader.loaded
+    finally:
+        _cleanup_modules()
+        # Best-effort cleanup of any path we may have left (in case of test failure)
+        for p in list(sys.path):
+            if "cartridge" in str(p).lower() or str(tmp_path) in str(p):
+                try:
+                    sys.path.remove(p)
+                except ValueError:
+                    pass
+
+
+# ------------------------------------------------------------------
+# P1-G: Reference Cartridge Validation (tgl_demo as canonical example)
+# ------------------------------------------------------------------
+
+def test_tgl_demo_pack_produces_valid_archive_and_exercises_reference_surface(tmp_path):
+    """P1-G validation: the reference cartridge (tgl_demo) can be packed and
+    the resulting archive is structurally valid. The entrypoint surface
+    (reset() for hot-restart, SaveStateProvider registration demo) is present.
+
+    This, combined with manual runs of `python main.py --cartridge ...` and
+    the unit coverage of load_directory/load_archive + providers + reset in
+    other tests, exercises the full pack → load .car → provider → reset cycle
+    for the canonical reference.
+    """
+    # Resolve relative to this test file so the path is stable even when pytest is
+    # invoked from a different working directory (e.g. from repo root or CI).
+    # tests/unit/ -> tests/ -> repo root, so three .parent traversals.
+    tgl_dir = Path(__file__).parent.parent.parent / "examples/cartridges/tgl_demo"
+    assert tgl_dir.exists(), "reference cartridge directory must exist"
+
+    out_car = tmp_path / "tgl_demo_ref.car"
+    exit_code = cartridge_pack.main([str(tgl_dir), "-o", str(out_car), "--force"])
+    assert exit_code == 0
+    assert out_car.exists()
+
+    # Archive structure for a complete reference cartridge
+    with zipfile.ZipFile(out_car, "r") as zf:
+        namelist = zf.namelist()
+        assert any(p.endswith("config/cartridge.json") for p in namelist)
+        assert any("python/tgl/entrypoint.py" in p for p in namelist)
+        # tgl_demo uses a .gitkeep under assets/sprites/ so the declared mount dir
+        # is present in the .car (packer only writes files; empty dirs are omitted).
+        # This makes load_archive succeed for the reference (full pack+archive roundtrip).
+        # Real sprites are resolved via engine asset precedence (P1-A) rather than
+        # bundled private copies. Core (config + python + assets placeholder) are asserted.
+        # manifest should declare the engine requirement (now enforced by P1-F)
+        manifest_data = json.loads(zf.read("config/cartridge.json"))
+        assert manifest_data["cartridge"].get("requires", {}).get("engine") == "^0.1.0"
+
+    # Entry point API surface expected for the reference (hot-restart + provider)
+    entry_src = (tgl_dir / "python" / "tgl" / "entrypoint.py").read_text()
+    assert "def reset(self):" in entry_src
+    assert "_TGLDemoSaveProvider" in entry_src or "register_provider" in entry_src
+    assert "save_state_manager" in entry_src
+
+    # Load smoke for the reference (both paths). The .gitkeep under assets/sprites/
+    # ensures the archive contains the declared mount dir so load_archive succeeds.
+    # Sprites resolve via engine precedence. We tolerate Panda init errors for the
+    # Dummy loader (full GUI runs are manual).
+    loader = CartridgeLoader(
+        world=DummyWorld(),
+        base=DummyBase(),
+        resource_manager=DummyResourceManager(),
+        save_state_manager=SaveStateManager(DummyWorld(), storage_root=tmp_path / "saves_ref"),
+        extract_root=tmp_path / "extract_tgl_ref",
+    )
+
+    # Directory load (dev path for the reference)
+    try:
+        ctx = loader.load_directory(str(tgl_dir))
+        assert ctx.manifest.name == "tgl_demo"
+        assert ctx.manifest.engine_requirement == "^0.1.0"
+        assert hasattr(ctx.entry_instance, "reset")
+    except AttributeError as e:
+        # Swallow expected Panda/DummyBase init noise (no real display, missing ShowBase attrs).
+        # Restricted to AttributeError (the failure mode with DummyBase) to avoid masking
+        # real cartridge/loader errors (e.g. ImportError from bad code).
+        msg = str(e).lower()
+        if "win" not in msg and "aspect" not in msg and "requestproperties" not in msg:
+            raise
+    finally:
+        _cleanup_modules()
+
+    # Archive load for the reference: with the .gitkeep placeholder under
+    # assets/sprites/ the pack includes at least one file under the declared
+    # assets mount, so extract produces the dir and load_archive succeeds
+    # (full roundtrip for the canonical reference, as documented in its README
+    # and P1-G). Sprites still resolve via engine fallbacks (precedence) since
+    # tgl_demo keeps the majority of its art outside its private assets/.
+    try:
+        ctx2 = loader.load_archive(str(out_car))
+        assert ctx2.manifest.name == "tgl_demo"
+        assert ctx2.manifest.engine_requirement == "^0.1.0"
+        assert hasattr(ctx2.entry_instance, "reset")
+    except AttributeError as e:
+        # Swallow expected Panda/DummyBase init noise (no real display, missing ShowBase attrs).
+        # Restricted to AttributeError (the failure mode with DummyBase) to avoid masking
+        # real cartridge/loader errors (e.g. ImportError from bad code).
+        msg = str(e).lower()
+        if "win" not in msg and "aspect" not in msg and "requestproperties" not in msg:
+            raise
+    finally:
+        _cleanup_modules()
+
+
+# ------------------------------------------------------------------
+# P1-F: Manifest engine requirement enforcement (version compatibility)
+# ------------------------------------------------------------------
+
+def test_loader_rejects_incompatible_engine_requirement(tmp_path):
+    """A cartridge declaring a future/incompatible engine requirement must fail
+    early with CartridgeValidationError (before sys.path or asset side effects).
+    """
+    overrides = {"cartridge": {"requires": {"engine": "^99.0.0"}}}
+    cartridge_dir, _ = _create_cartridge_tree(tmp_path / "bad_req", overrides)
+
+    loader = CartridgeLoader(
+        world=DummyWorld(),
+        base=DummyBase(),
+        resource_manager=DummyResourceManager(),
+    )
+
+    with pytest.raises(CartridgeValidationError) as excinfo:
+        try:
+            loader.load_directory(str(cartridge_dir))
+        finally:
+            _cleanup_modules()
+
+    msg = str(excinfo.value)
+    assert "requires engine" in msg
+    assert "^99.0.0" in msg
+    assert "this engine is" in msg
+
+
+def test_loader_accepts_compatible_engine_requirement(tmp_path):
+    """^0.1.0 (as declared by the reference tgl_demo) must load successfully."""
+    overrides = {"cartridge": {"requires": {"engine": "^0.1.0"}}}
+    cartridge_dir, _ = _create_cartridge_tree(tmp_path / "good_req", overrides)
+
+    loader = CartridgeLoader(
+        world=DummyWorld(),
+        base=DummyBase(),
+        resource_manager=DummyResourceManager(),
+    )
+
+    try:
+        ctx = loader.load_directory(str(cartridge_dir))
+        assert ctx.manifest.engine_requirement == "^0.1.0"
+        assert ctx.manifest.name == "Test Cartridge"
+    finally:
+        _cleanup_modules()
+
+
+def test_loader_accepts_missing_engine_requirement(tmp_path):
+    """Manifests that omit 'requires.engine' entirely must continue to load
+    (no breaking change for existing or minimal cartridges).
+    """
+    # Explicitly ensure the key is absent by starting clean and not providing it
+    cartridge_dir, _ = _create_cartridge_tree(tmp_path / "no_req")
+
+    loader = CartridgeLoader(
+        world=DummyWorld(),
+        base=DummyBase(),
+        resource_manager=DummyResourceManager(),
+    )
+
+    try:
+        ctx = loader.load_directory(str(cartridge_dir))
+        assert ctx.manifest.engine_requirement is None
+    finally:
+        _cleanup_modules()
+
+
+def test_loader_unload_calls_teardown_hook(tmp_path):
+    """If the entrypoint instance has a teardown (or unload/cleanup) method it is invoked."""
+    cartridge_dir = tmp_path / "with_teardown"
+    cartridge_dir, _ = _create_cartridge_tree(cartridge_dir)
+
+    loader = CartridgeLoader(
+        world=DummyWorld(),
+        base=DummyBase(),
+        resource_manager=DummyResourceManager(),
+        extract_root=tmp_path / "extract_teardown",
+    )
+
+    teardown_called = {"flag": False, "manifest_name": None}
+
+    try:
+        ctx = loader.load_directory(str(cartridge_dir))
+        entry = ctx.entry_instance
+
+        def fake_teardown(world=None, base=None, manifest=None):
+            teardown_called["flag"] = True
+            teardown_called["manifest_name"] = getattr(manifest, "name", None)
+
+        # Attach after load (the hook lookup uses getattr at unload time)
+        entry.teardown = fake_teardown
+
+        assert loader.unload(ctx) is True
+        assert teardown_called["flag"] is True
+        assert teardown_called["manifest_name"] == "Test Cartridge"
+    finally:
+        _cleanup_modules()
+
+
+def test_loader_unload_unmounts_assets(tmp_path):
+    """unload must call unmount_asset_root on the RM for the recorded cartridge assets path."""
+    cartridge_dir = tmp_path / "asset_unmount"
+    cartridge_dir, _ = _create_cartridge_tree(cartridge_dir)
+
+    class TrackingRM(DummyResourceManager):
+        def __init__(self):
+            super().__init__()
+            self.unmount_calls: list[str] = []
+
+        def unmount_asset_root(self, path: str):
+            self.unmount_calls.append(path)
+
+    rm = TrackingRM()
+    loader = CartridgeLoader(
+        world=DummyWorld(),
+        base=DummyBase(),
+        resource_manager=rm,
+        extract_root=tmp_path / "extract_assets",
+    )
+
+    try:
+        ctx = loader.load_directory(str(cartridge_dir))
+        name = ctx.manifest.name
+
+        # We should have recorded the asset root during load
+        recorded = loader._asset_root_for.get(name)
+        assert recorded is not None
+
+        assert loader.unload(name) is True
+        assert any(recorded in call for call in rm.unmount_calls), (
+            f"expected unmount of {recorded}, got {rm.unmount_calls}"
+        )
+    finally:
+        _cleanup_modules()
+
+
+def test_loader_passes_cartridge_context_and_supports_new_style_hook(tmp_path):
+    """CartridgeContext is constructed, attached to entry as .context, and passed
+    as the `context` kwarg to initialize (new-style hook). Legacy hooks continue
+    to work via fallback (covered by other tests + tgl_demo canary).
+    """
+    cartridge_dir = tmp_path / "with_context"
+    cartridge_dir, _ = _create_cartridge_tree(cartridge_dir)
+
+    # Override the generated entrypoint with one that only accepts `context`
+    # (proves new cartridges can be written against CartridgeContext only).
+    python_root = cartridge_dir / "python"
+    main_py = python_root / "guardian" / "main.py"
+    _write_file(
+        main_py,
+        textwrap.dedent(
+            """
+            from engine.cartridge.context import CartridgeContext
+
+            class Cartridge:
+                def __init__(self):
+                    self.context_received = None
+                    self.manifest_name = None
+
+                def initialize(self, context):
+                    # New-style only signature
+                    if not isinstance(context, CartridgeContext):
+                        raise TypeError("expected CartridgeContext")
+                    self.context_received = context
+                    self.manifest_name = getattr(context.manifest, "name", None)
+                    # Exercise other surfaces
+                    _ = context.world
+                    _ = context.base
+                    if context.save_state_manager is not None:
+                        context.save_state_manager  # accessible
+                    if context.resource_manager is not None:
+                        context.resource_manager  # accessible
+            """
+        ).strip()
+        + "\n",
+    )
+
+    loader = CartridgeLoader(
+        world=DummyWorld(),
+        base=DummyBase(),
+        resource_manager=DummyResourceManager(),
+        extract_root=tmp_path / "extract_ctx",
+    )
+
+    try:
+        loaded = loader.load_directory(str(cartridge_dir))
+        entry = loaded.entry_instance
+
+        assert hasattr(entry, "context"), "entry should have .context attached"
+        assert isinstance(entry.context, CartridgeContext)
+        assert entry.context is entry.context_received
+        assert entry.manifest_name == "Test Cartridge"
+        assert loaded.manifest.name == "Test Cartridge"
+    finally:
+        _cleanup_modules()

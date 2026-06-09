@@ -16,6 +16,50 @@ python main.py --cartridge examples/cartridges/tgl_demo
 - Controls: Arrow keys / WASD to move, Space to shoot.
 - The demo is intentionally minimal — a vertical lane with a player ship, basic enemy waves, score/lives, and invulnerability on hit.
 
+## Cartridge Dev Loop & Reference Implementation (P1-G)
+
+`tgl_demo` is the **canonical reference cartridge** for the Phase 1 polished cartridge system. It exercises:
+
+- `cartridge.json` with `requires.engine`, `assets.mount`, `systems.register`, metadata.
+- Directory mode (dev) **and** packed `.car` (via `py2d-cartridge`; a `.gitkeep` under `assets/sprites/` ensures the declared assets mount dir is present in the archive so `load_archive` succeeds).
+- `CartridgeContext` (legacy hook signature for compatibility) + `.context` attachment.
+- Private asset overlay via ResourceManager (P1-A; tgl_demo currently relies on engine asset fallbacks for sprites, with the local `assets/` present for the mount contract and future private assets).
+- Custom components + systems under `python/tgl/`.
+- Visual-bound hitboxes (`get_visual_size` + `compute_hitbox_size`).
+- `CollisionLayer` + `mask_of` (standard engine layers).
+- `--dev-mode` + colored debug overlays (blue=player, red=enemies, yellow=bullets) via `PandaCollisionSystem`.
+- Hot-restart UX, guarded wiring, clean shutdown.
+- `SaveStateProvider` registration (see `initialize` for the `_TGLDemoSaveProvider` demo).
+- `reset(self)` contract for repeated play without process restart.
+
+### Dev Workflow
+
+```bash
+# Development (fast iteration, live edits)
+python main.py --cartridge examples/cartridges/tgl_demo --dev-mode
+
+# Pack as self-contained cartridge (exercises archive path + full load_archive roundtrip)
+py2d-cartridge examples/cartridges/tgl_demo
+# or from inside the cartridge dir:
+# py2d-cartridge . -o ../../dist/tgl_demo-0.1.0.car --force
+
+# Run the packed .car (behaves like directory mode; assets/ dir present via placeholder
+# so the loader does not raise "assets directory missing").
+python main.py --cartridge dist/tgl_demo-0.1.0.car --dev-mode
+```
+
+**Hotkeys (while running):**
+- **R** or **F5**: Hot-restart — calls the entrypoint `reset()` method. Clears entities, resets spawners/controllers, re-spawns the player and scene. Safe thanks to `_ensure_systems_and_events` guard and `_safe_destroy`.
+- **V** / **v** (in --dev-mode): Toggle colored collision visualization.
+- **ESC**: Clean shutdown (engine-level, also handles window close button).
+
+The `reset()` implementation (and supporting `_ensure...`, `_create_background` child cleanup, `_safe_destroy`) is a reusable pattern for cartridges that want reliable dev hot-restart. See the source in `python/tgl/entrypoint.py`.
+
+See also:
+- `docs/guides/cartridge_loader_guide.md` (full loader + packaging docs + known limitations addressed in P1)
+- `docs/PHASE1_CARTRIDGE_SYSTEM_POLISH.md` (P1-G track + overall cartridge polish)
+- `examples/cartridges/tgl_demo/config/game_settings.yaml` (tuning scales + collider factors)
+
 ### Developer mode (hitbox visualization)
 
 ```bash

@@ -32,7 +32,8 @@ except Exception:  # pragma: no cover
 RENDER_BASE_SCALE = 0.5
 
 
-def get_visual_size(image_path: str, loader: Optional[object] = None) -> Tuple[float, float]:
+def get_visual_size(image_path: str, loader: Optional[object] = None,
+                    resource_manager: Optional[object] = None) -> Tuple[float, float]:
     """Return the effective (width, height) in aspect2d units that a sprite
     using this asset will occupy when TransformComponent(scale_x=1, scale_y=1).
 
@@ -41,12 +42,20 @@ def get_visual_size(image_path: str, loader: Optional[object] = None) -> Tuple[f
 
     The returned size is the *full* footprint (not half-extents).
 
+    When a ResourceManager with mounted cartridge asset roots is supplied,
+    the relative image_path is resolved against the layered roots first
+    (cartridge assets win). This keeps cartridge code using the same
+    "assets/..." strings in both dev (dir) and packaged (.car) modes.
+
     Args:
         image_path: Path as used by SpriteComponent (e.g. "assets/sprites/ship/ship.egg").
                     Must be resolvable by the provided (or global) Panda loader.
         loader: A Panda3D loader object (base.loader). If None, the function
                 will attempt to use the global `base.loader` if available in
                 the current ShowBase (best-effort; prefer passing it explicitly).
+        resource_manager: Optional ResourceManager (typically base.resource_manager
+                after cartridge load). When present its resolve_asset_path is used
+                so private cartridge assets take precedence.
 
     Returns:
         (visual_width, visual_height) for scale=1.0
@@ -57,7 +66,7 @@ def get_visual_size(image_path: str, loader: Optional[object] = None) -> Tuple[f
 
     lower = image_path.lower()
     if lower.endswith(".egg"):
-        return _get_egg_visual_size(image_path, loader)
+        return _get_egg_visual_size(image_path, loader, resource_manager)
 
     # PNG / texture path (CardMaker path in RenderSystem creates a square -0.5..0.5 card)
     # Current render path does *not* auto-correct for texture aspect on the CardMaker;
@@ -68,8 +77,13 @@ def get_visual_size(image_path: str, loader: Optional[object] = None) -> Tuple[f
     return (RENDER_BASE_SCALE * 1.0, RENDER_BASE_SCALE * 1.0)
 
 
-def _get_egg_visual_size(egg_path: str, loader: Optional[object]) -> Tuple[float, float]:
-    """Internal: load .egg, replicate RenderSystem normalization, apply base scale."""
+def _get_egg_visual_size(egg_path: str, loader: Optional[object],
+                       resource_manager: Optional[object] = None) -> Tuple[float, float]:
+    """Internal: load .egg, replicate RenderSystem normalization, apply base scale.
+
+    Resolves via resource_manager (if provided) before calling the loader so that
+    cartridge-mounted asset roots are respected for the temporary bounds probe.
+    """
     effective_loader = loader
     if effective_loader is None:
         # Best-effort fallback (works inside a running ShowBase)
@@ -91,8 +105,19 @@ def _get_egg_visual_size(egg_path: str, loader: Optional[object]) -> Tuple[float
               "returning conservative default visual size.")
         return (0.4, 0.5)
 
+    load_path = egg_path
+    if resource_manager is not None:
+        try:
+            resolved = getattr(resource_manager, "resolve_asset_path", None)
+            if callable(resolved):
+                rp = resolved(egg_path)
+                if rp:
+                    load_path = rp
+        except Exception:
+            pass
+
     try:
-        model = effective_loader.loadModel(egg_path)
+        model = effective_loader.loadModel(load_path)
     except Exception as e:
         print(f"[sprite_visual_size] ERROR loading egg {egg_path}: {e}")
         return (0.4, 0.5)

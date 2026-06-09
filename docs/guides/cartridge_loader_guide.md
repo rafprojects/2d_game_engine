@@ -52,8 +52,8 @@ The manifest is validated against `docs/schemas/cartridge.schema.json` (the same
 1. **Extraction** – `CartridgeLoader` unpacks the archive to `~/.cache/tmp/2dge_cartridges/{name}-{version}-{uid}` (override with `--cartridge-extract`).
 2. **Python Path Mount** – The loader prepends `<extract>/python` to `sys.path` so imports resolve cartridge modules.
 3. **Asset Mount** – If a `ResourceManager` system exists, `mount_asset_root` is invoked so `<extract>/assets/<mount>` becomes the highest-priority search path while previous roots remain available as fallbacks.
-4. **Entrypoint Instantiation** – The loader imports the entrypoint class and instantiates it. If the instance exposes any of `mount`, `load`, or `initialize`, the first available hook is invoked with `world`, `base`, and `manifest` keyword arguments.
-5. **System Registration** – Each module listed under `systems.register` is imported. If the module defines `register(world, base)`, it is executed so the module can add systems/components/events.
+4. **Entrypoint Instantiation** – The loader imports the entrypoint class and instantiates it. A `CartridgeContext` is constructed (exposing `world`, `base`, `manifest`, `resource_manager`, `save_state_manager`, and `loader`). If the instance exposes any of `mount`, `load`, or `initialize`, the first available hook is invoked. New cartridges may accept a single `context` argument (`def initialize(self, context): ...`). For backward compatibility during transition, the legacy `world`/`base`/`manifest` kwargs are still supplied via fallback so existing cartridges continue to run unchanged.
+5. **System Registration** – Each module listed under `systems.register` is imported. If the module defines `register(world, base)` (or the new `register(context)` form), it is executed so the module can add systems/components/events. Same context + legacy fallback calling convention as entry hooks.
 6. **Save-State Wiring** – When the host constructs the loader with a `SaveStateManager`, the manifest metadata is attached automatically and the instantiated entry receives `save_state_manager` as an attribute so cartridges can register snapshot providers during `initialize`.
 
 ## CLI Usage
@@ -72,19 +72,52 @@ python main.py --cartridge cartridges/guardian_legends.car --cartridge-extract /
 
 If loading fails, the engine logs the exception and falls back to the built-in demo entity.
 
+### Creating a new cartridge (P1-D)
+
+```bash
+py2d-cartridge init "My Awesome Game"
+cd my-awesome-game
+# Edit config/cartridge.json, python/.../entrypoint.py, drop art in assets/
+```
+
+The scaffold includes a working `config/cartridge.json`, a `python/<slug>/entrypoint.py` (using CartridgeContext), a tiny custom component + registered system, a SaveStateProvider example, and a private sprite asset so it renders immediately.
+
 ### Packaging a cartridge
 
-Use the new `py2d-cartridge` helper (or `python -m tools.cli.cartridge_pack`) from the root of a cartridge project that contains `config/cartridge.json`, an assets folder, and a python module tree:
+Use the `py2d-cartridge` helper (or `python -m tools.cli.cartridge_pack`) from the root of a cartridge project that contains `config/cartridge.json`, an assets folder, and a python module tree:
 
 ```bash
 # From cartridge workspace
-py2d-cartridge .
+py2d-cartridge .                 # pack (or: py2d-cartridge pack .)
 
 # Explicit output + overwrite
-py2d-cartridge . -o ../cartridges/guardian_legends.car --force
+py2d-cartridge . -o ../cartridges/my-game-0.1.0.car --force
 ```
 
 The packer performs the same JSON Schema validation as the runtime loader before emitting `dist/<name>-<version>.car`. Hidden build folders (`dist`, `build`, `__pycache__`, etc.) are skipped automatically; additional folders can be excluded via `--ignore foo`. Use `--dry-run` to validate a project without creating an archive.
+
+### Reference Cartridge (P1-G)
+
+`examples/cartridges/tgl_demo/` is the **canonical reference implementation** for the polished cartridge system:
+
+- Full `cartridge.json` (requires, systems.register, metadata, assets.mount).
+- Directory + archive (`.car`) roundtrip via `py2d-cartridge` (a `.gitkeep` placeholder under `assets/sprites/` ensures the declared mount dir exists after extract so `load_archive` succeeds cleanly).
+- Legacy hook compatibility + `CartridgeContext`.
+- Private assets mount (tgl_demo uses engine asset precedence for its sprites today; the local `assets/` satisfies the contract and demonstrates the mechanism).
+- Visual hitbox derivation, standard CollisionLayer usage.
+- `--dev-mode` integration with colored `PandaCollisionSystem` viz (blue/red/yellow).
+- Hot-restart via public `reset()` + guarded `_ensure_systems_and_events`.
+- `SaveStateProvider` registration demo.
+- Clean dev loop (R/F5 restart, V viz toggle in dev-mode, ESC shutdown).
+
+Run it:
+
+```bash
+python main.py --cartridge examples/cartridges/tgl_demo --dev-mode
+py2d-cartridge examples/cartridges/tgl_demo   # produces .car with assets/ placeholder; load_archive succeeds (see tgl_demo/README "Packaging" + dev workflow)
+```
+
+Its README documents the complete dev workflow, hotkeys, reset contract, and tuning. Use `tgl_demo` as the model and proof point when building or reviewing other cartridges. See `PHASE1_CARTRIDGE_SYSTEM_POLISH.md` (P1-G track) for validation criteria.
 
 ## Loader API
 
@@ -100,10 +133,15 @@ print(context.manifest.name)
 
 `LoadedCartridge` contains the manifest, archive path, extraction path, instantiated entry object, list of system modules that were imported, and (optionally) the `SaveStateManager` reference that was passed into the loader.
 
+After a successful load, the entry instance also receives a `.context` attribute (a `CartridgeContext`). The same context object is passed to hooks (as the `context` kwarg for new-style code). `CartridgeContext` is the recommended stable surface for cartridge authors (see `engine/cartridge/context.py`).
+
 ## Known Limitations
 
-- Only one cartridge overlay is active at a time; loading a new archive simply mounts another root above the existing stack and does not tear down previously loaded systems.
-- Mounted overlays remain until the session ends; there is no UI/CLI workflow yet for unmounting or reordering roots.
-- Cartridge archives must already contain compiled Python modules/assets; there is no build pipeline yet. A CLI packer is planned for `tools/cli`.
+- **(Addressed in P1-B)** `CartridgeLoader.unload(name_or_context)` now exists. It removes any python path we inserted, calls an optional `teardown`/`unload`/`cleanup` hook on the entrypoint instance (if present), unmounts the cartridge's asset root (via `ResourceManager.unmount_asset_root`), and drops the `LoadedCartridge` record. Both directory and archive loads are supported. Call it as `loader.unload("my_cartridge")` or `loader.unload(loaded_context)`.
+- **(Addressed in P1-C)** `CartridgeContext` is now the primary object passed to entrypoint hooks (`initialize`/`load`/`mount`) and `systems.register` functions. The entry instance also gets `.context` set. Legacy `(world, base, manifest)` calling convention continues to work via automatic fallback so cartridges like tgl_demo are unaffected. New code can be written as `def initialize(self, context): ...` (and similarly for register/teardown). `context` also carries `resource_manager`, `save_state_manager`, and `loader` for self-unload scenarios.
+- The "one cartridge at a time" mental model is still the primary supported mode (classic console cartridge). Loading a second cartridge while one is active will stack python paths and asset roots; explicit `unload` of the previous one is required for a clean switch.
+- Python modules are not unloaded from `sys.modules` (Python does not support clean package unload in general). A future iteration may adopt `importlib.util` for more isolated loading.
+- Cartridge archives must already contain compiled Python modules/assets; there is no build pipeline yet beyond the existing packer. 
+- No high-level host/menu UI for cartridge switching yet (see PHASE4 for multi-cartridge host sketches).
 
-Use this doc as the reference while iterating on the loader; future updates will flesh out schema validation, save-state integration, and CLI packaging.
+Use this doc as the reference while iterating on the loader; future updates will flesh out schema validation, save-state integration, and CLI packaging. See `PHASE1_CARTRIDGE_SYSTEM_POLISH.md` (tracks P1-B and P1-C) for the current lifecycle + context work.

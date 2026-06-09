@@ -2,38 +2,29 @@
 """
 Project Generator CLI Tool
 
-Advanced scaffolding and code generation for the 2D Game Engine:
-- Complete game project templates (platformer, shooter, RPG, puzzle)
-- Component and system templates with best practices
-- Custom scene templates
-- Asset organization structures
-- Testing boilerplate generation
-- Documentation templates
+Advanced scaffolding and code generation for the 2D Game Engine.
+
+**Primary path (cartridges):** use `py2d-cartridge init <name>` (recommended).
+  This produces a self-contained cartridge (config/cartridge.json + python/<slug>/ + assets/)
+  that works with `py2d-cartridge .` pack and `python main.py --cartridge <dir>`.
+
+This tool (py2d-engine) still supports the legacy direct `examples/games/` layout
+via `new-game` for compatibility, plus component/system/example generators.
 
 Usage:
     python -m tools.cli.project_gen [command] [options]
     py2d-engine [command] [options]  # When installed
     
 Commands:
-    new-game [name]     - Create a new game project with template
-    new-component       - Create component with boilerplate
-    new-system          - Create system with boilerplate
-    new-scene           - Create scene template
-    new-example         - Create example/demo template
-    new-test            - Create test template for component/system
-    templates           - List available templates
-    
-Template Types:
-    --platformer        - Side-scrolling platformer game
-    --top-down          - Top-down action/shooter game
-    --puzzle            - Puzzle game mechanics
-    --rpg               - RPG-style game with inventory/stats
-    --minimal           - Minimal game template
+    new-cartridge [name] - Create a new cartridge project (modern; delegates to py2d-cartridge init)
+    new-game [name]      - Create a new game project (legacy flat layout under examples/games/)
+    new-component        - Create component with boilerplate
+    new-system           - Create system with boilerplate
+    new-example          - Create example/demo template
+    new-test             - Create test template for component/system
+    templates            - List available templates
 
-Examples:
-    py2d-engine new-game "My Platformer" --template platformer
-    py2d-engine new-component PlayerController --with-test
-    py2d-engine new-system AudioSystem --events --documentation
+Prefer cartridges for new work. See docs/PHASE1_CARTRIDGE_SYSTEM_POLISH.md (P1-D).
 """
 
 import argparse
@@ -49,8 +40,14 @@ from tools.cli import (
 )
 
 def create_new_game(game_name):
-    """Create a new game project structure."""
-    print_header(f"Creating New Game: {game_name}")
+    """Create a new game project structure (legacy path).
+
+    Note (P1-D): The modern recommended way to start a game is with a cartridge:
+        py2d-cartridge init "My Game"
+    The old flat layout under examples/games/ is kept for compatibility.
+    """
+    print_header(f"Creating New Game (legacy): {game_name}")
+    print_warning("For new work prefer: py2d-cartridge init <name>  (produces packable cartridge layout)")
     
     # Sanitize game name
     safe_name = "".join(c for c in game_name if c.isalnum() or c in ('_', '-')).lower()
@@ -93,6 +90,32 @@ def create_new_game(game_name):
     print(f"  python main.py")
     
     return True
+
+
+def create_new_cartridge(game_name):
+    """Create a modern cartridge project by delegating to the cartridge CLI logic.
+
+    This makes `py2d-engine new-cartridge` also produce the correct layout
+    (config + python package + assets) so both entry points steer users right.
+    """
+    print_header(f"Creating New Cartridge: {game_name}")
+    try:
+        # Import here to avoid hard dep at module load and any circular import issues
+        # with the CLI utils path hack.
+        from .cartridge_pack import create_new_cartridge as _create
+        created = _create(game_name)
+        print_success(f"Cartridge created at: {created}")
+        print_info("Pack & run:")
+        print(f"  cd {created}")
+        print("  py2d-cartridge .")
+        print(f"  python /path/to/2d_game_engine/main.py --cartridge {created}")
+        print_info("  (Invoke from the 2d_game_engine source root; `python -m main` is not")
+        print_info("   available because main.py is not packaged as a module.)")
+        return True
+    except Exception as e:
+        print_error(f"Could not create cartridge via py2d-cartridge logic: {e}")
+        print_info(f"Alternative: run `py2d-cartridge init \"{game_name}\"` directly.")
+        return False
 
 def create_main_py_template(game_name, safe_name):
     """Create main.py template for new game."""
@@ -452,8 +475,12 @@ def main():
     parser = argparse.ArgumentParser(description="Project Generator Tool")
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
     
-    # New game command
-    game_parser = subparsers.add_parser('new-game', help='Create a new game project')
+    # New cartridge (modern, primary) command
+    cartridge_parser = subparsers.add_parser('new-cartridge', help='Create a new cartridge project (recommended modern path)')
+    cartridge_parser.add_argument('name', help='Name of the new cartridge')
+
+    # New game command (legacy)
+    game_parser = subparsers.add_parser('new-game', help='Create a new game project (legacy flat layout)')
     game_parser.add_argument('name', help='Name of the new game')
     
     # New component command
@@ -479,12 +506,13 @@ def main():
         return 1
     
     commands = {
+        'new-cartridge': lambda: create_new_cartridge(args.name),
         'new-game': lambda: create_new_game(args.name),
         'new-component': create_new_component,
         'new-system': create_new_system,
         'new-example': create_new_example,
         'new-test': lambda: (print("New test template creation not implemented yet."), False)[1],
-        'templates': lambda: (print("Available templates:\n- Platformer\n- Shooter\n- RPG\n- Puzzle\n- Minimal"), True)[1]
+        'templates': lambda: (print("Available templates:\n- Platformer\n- Shooter\n- RPG\n- Puzzle\n- Minimal\n(Cartridge templates via py2d-cartridge init)"), True)[1]
     }
     
     if args.command not in commands:

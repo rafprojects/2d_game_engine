@@ -83,16 +83,9 @@ class Game(ShowBase):
 
         self.world = World()
 
-        # Add systems
-        self.render_system = RenderSystem(self.world, self) # Pass ShowBase instance
-        self.world.add_system(self.render_system)
-
-        self.input_system = InputSystem(self.world, self) # Pass ShowBase instance
-        self.world.add_system(self.input_system)
-        
-        self.movement_system = MovementSystem(self.world)
-        self.world.add_system(self.movement_system)
-
+        # Asset systems first so RenderSystem (and future consumers) can resolve cartridge
+        # assets via mounted roots. RenderSystem receives the RM (may be None if assets
+        # pipeline unavailable) for precedence in _load_texture / egg loads.
         self.resource_manager = None
         self.asset_streaming_system = None
         if ASSETS_AVAILABLE:
@@ -100,6 +93,16 @@ class Game(ShowBase):
             self.world.add_system(self.resource_manager)
             self.asset_streaming_system = AssetStreamingSystem(self.world, self.resource_manager)
             self.world.add_system(self.asset_streaming_system)
+
+        # Add systems (RenderSystem now after RM so it can use resolve_asset_path for cartridge mounts)
+        self.render_system = RenderSystem(self.world, self, resource_manager=self.resource_manager) # Pass ShowBase + optional RM for asset precedence
+        self.world.add_system(self.render_system)
+
+        self.input_system = InputSystem(self.world, self) # Pass ShowBase instance
+        self.world.add_system(self.input_system)
+        
+        self.movement_system = MovementSystem(self.world)
+        self.world.add_system(self.movement_system)
 
         self.cartridge_loader = None
         self.cartridge_context = None

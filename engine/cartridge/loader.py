@@ -19,6 +19,7 @@ from jsonschema import Draft202012Validator
 
 from .errors import CartridgeLoadError, CartridgeValidationError
 from .manifest import CartridgeManifest
+from .context import CartridgeContext
 
 if TYPE_CHECKING:  # pragma: no cover
     from engine.save_state.manager import SaveStateManager
@@ -50,6 +51,10 @@ class CartridgeLoader:
         self.extract_root = Path(extract_root) if extract_root else Path(tempfile.gettempdir()) / "2dge_cartridges"
         self.extract_root.mkdir(parents=True, exist_ok=True)
         self.loaded: Dict[str, LoadedCartridge] = {}
+        # Track what *we* inserted so unload can cleanly reverse sys.path and asset mounts.
+        # Keyed by cartridge manifest.name for reliable lookup regardless of how unload is called.
+        self._python_path_for: Dict[str, Optional[str]] = {}
+        self._asset_root_for: Dict[str, Optional[str]] = {}
         self._manifest_schema: Optional[Dict[str, Any]] = None
         self._validator: Optional[Draft202012Validator] = None
 
@@ -74,37 +79,81 @@ class CartridgeLoader:
         except ValueError as exc:
             raise CartridgeValidationError(str(exc)) from exc
 
+        self._check_engine_requirement(manifest)
+
+        if manifest.name in self.loaded:
+            raise CartridgeLoadError(
+                f"Cartridge '{manifest.name}' is already loaded. "
+                "Call loader.unload(name) (or the LoadedCartridge) before loading it again."
+            )
+
         python_path = directory_path / manifest.python_path
-        if python_path.exists() and python_path.is_dir():
-            path_str = str(python_path)
-            if path_str not in sys.path:
-                sys.path.insert(0, path_str)
+        inserted_py = self._python_path_for.get(manifest.name)
+        if inserted_py is None:
+            # Only decide/insert if we have no prior record for this cartridge name.
+            # Prevents losing track of an inserted path on re-load attempts (the
+            # "already loaded" guard above catches most double-load cases).
+            if python_path.exists() and python_path.is_dir():
+                path_str = str(python_path)
+                if path_str not in sys.path:
+                    sys.path.insert(0, path_str)
+                    inserted_py = path_str
+                # else: already present on sys.path (user-managed or prior); we record None
+            # else: no python/ dir; record None (we inserted nothing)
+        self._python_path_for[manifest.name] = inserted_py
 
         # Assets are optional in directory mode — sprites may be served from CWD.
         assets_path = directory_path / manifest.assets.mount_path
+        mounted_asset = None
         if assets_path.exists():
             self._mount_assets(assets_path)
+            mounted_asset = str(assets_path)
+        self._asset_root_for[manifest.name] = mounted_asset
 
-        if self.save_state_manager:
-            self.save_state_manager.attach_manifest(manifest)
+        # Protect against leaks on any failure during entrypoint work (instantiate,
+        # hooks, system registration). If anything here raises we roll back the
+        # sys.path insertion and asset mount we just performed for this cartridge
+        # name (plus the tracker entries) so that the caller cannot be left with
+        # un-unloadable global state. See also the symmetric logic in load_archive.
+        try:
+            if self.save_state_manager:
+                self.save_state_manager.attach_manifest(manifest)
 
-        entry_instance = self._instantiate_entrypoint(manifest)
-        if self.save_state_manager:
-            setattr(entry_instance, "save_state_manager", self.save_state_manager)
-        self._run_entry_hook(entry_instance, manifest)
-        loaded_modules = self._register_system_modules(manifest)
+            entry_instance = self._instantiate_entrypoint(manifest)
+            ctx = self._make_context(manifest)
+            setattr(entry_instance, "context", ctx)
+            if self.save_state_manager:
+                setattr(entry_instance, "save_state_manager", self.save_state_manager)
+            self._run_entry_hook(entry_instance, manifest, ctx)
+            loaded_modules = self._register_system_modules(manifest, ctx)
 
-        context = LoadedCartridge(
-            manifest=manifest,
-            archive_path=directory_path,
-            extract_path=directory_path,
-            entry_instance=entry_instance,
-            system_modules=loaded_modules,
-            save_state_manager=self.save_state_manager,
-        )
+            context = LoadedCartridge(
+                manifest=manifest,
+                archive_path=directory_path,
+                extract_path=directory_path,
+                entry_instance=entry_instance,
+                system_modules=loaded_modules,
+                save_state_manager=self.save_state_manager,
+            )
 
-        self.loaded[manifest.name] = context
-        return context
+            self.loaded[manifest.name] = context
+            return context
+        except Exception:
+            # Rollback mutations performed for this name on failure.
+            self._python_path_for.pop(manifest.name, None)
+            self._asset_root_for.pop(manifest.name, None)
+            if inserted_py and inserted_py in sys.path:
+                try:
+                    sys.path.remove(inserted_py)
+                except ValueError:
+                    pass
+            if mounted_asset and self.resource_manager is not None:
+                try:
+                    if hasattr(self.resource_manager, "unmount_asset_root"):
+                        self.resource_manager.unmount_asset_root(mounted_asset)
+                except Exception:
+                    pass  # best-effort during error recovery
+            raise
 
     def load_archive(self, archive_path: str | os.PathLike[str]) -> LoadedCartridge:
         archive_path = Path(archive_path)
@@ -115,38 +164,181 @@ class CartridgeLoader:
             manifest = self._read_manifest(zf)
             extract_dir = self._extract_archive(zf, manifest)
 
+        self._check_engine_requirement(manifest)
+
+        if manifest.name in self.loaded:
+            raise CartridgeLoadError(
+                f"Cartridge '{manifest.name}' is already loaded. "
+                "Call loader.unload(name) (or the LoadedCartridge) before loading it again."
+            )
+
         python_path = extract_dir / manifest.python_path
-        if python_path.exists() and python_path.is_dir():
-            path_str = str(python_path)
-            if path_str not in sys.path:
-                sys.path.insert(0, path_str)
+        inserted_py = self._python_path_for.get(manifest.name)
+        if inserted_py is None:
+            # Only decide/insert if we have no prior record for this cartridge name.
+            # Prevents losing track of an inserted path on re-load attempts (the
+            # "already loaded" guard above catches most double-load cases).
+            if python_path.exists() and python_path.is_dir():
+                path_str = str(python_path)
+                if path_str not in sys.path:
+                    sys.path.insert(0, path_str)
+                    inserted_py = path_str
+                # else: already present on sys.path (user-managed or prior); we record None
+            # else: no python/ dir; record None (we inserted nothing)
+        self._python_path_for[manifest.name] = inserted_py
 
         assets_path = extract_dir / manifest.assets.mount_path
+        mounted_asset = None
         if assets_path.exists():
             self._mount_assets(assets_path)
+            mounted_asset = str(assets_path)
+            self._asset_root_for[manifest.name] = mounted_asset
         else:
+            # Python path (if any) was inserted for this name; clean it up before
+            # raising so we don't leave an orphaned sys.path entry + tracker.
+            if inserted_py and inserted_py in sys.path:
+                try:
+                    sys.path.remove(inserted_py)
+                except ValueError:
+                    pass
+            self._python_path_for.pop(manifest.name, None)
             raise CartridgeLoadError(f"Cartridge assets directory missing: {assets_path}")
 
+        # Protect against leaks on any failure during entrypoint work (instantiate,
+        # hooks, system registration). Roll back sys.path + asset mount + trackers
+        # for this name. (The assets-missing case above already handled its python
+        # cleanup.)
+        try:
+            if self.save_state_manager:
+                self.save_state_manager.attach_manifest(manifest)
+
+            entry_instance = self._instantiate_entrypoint(manifest)
+            ctx = self._make_context(manifest)
+            setattr(entry_instance, "context", ctx)
+            if self.save_state_manager:
+                setattr(entry_instance, "save_state_manager", self.save_state_manager)
+            self._run_entry_hook(entry_instance, manifest, ctx)
+            loaded_modules = self._register_system_modules(manifest, ctx)
+
+            context = LoadedCartridge(
+                manifest=manifest,
+                archive_path=archive_path,
+                extract_path=extract_dir,
+                entry_instance=entry_instance,
+                system_modules=loaded_modules,
+                save_state_manager=self.save_state_manager,
+            )
+
+            self.loaded[manifest.name] = context
+            return context
+        except Exception:
+            # Rollback mutations performed for this name on failure.
+            self._python_path_for.pop(manifest.name, None)
+            self._asset_root_for.pop(manifest.name, None)
+            if inserted_py and inserted_py in sys.path:
+                try:
+                    sys.path.remove(inserted_py)
+                except ValueError:
+                    pass
+            if mounted_asset and self.resource_manager is not None:
+                try:
+                    if hasattr(self.resource_manager, "unmount_asset_root"):
+                        self.resource_manager.unmount_asset_root(mounted_asset)
+                except Exception:
+                    pass  # best-effort during error recovery
+            raise
+
+    def unload(self, name_or_context: str | LoadedCartridge | None = None) -> bool:
+        """Unload a previously loaded cartridge by name or LoadedCartridge instance.
+
+        - Removes any python_path we inserted from sys.path (if present).
+        - Calls an optional `teardown` / `unload` / `cleanup` hook on the entry instance
+          (first match wins), passing the same (world, base, manifest) style as initialize hooks.
+        - Unmounts the cartridge's asset root via ResourceManager (if recorded and supported).
+        - Removes the entry from self.loaded.
+        - Extract directories for archives are left in place (conservative; caller can clean
+          the extract_root if desired).
+
+        Returns True if a cartridge was unloaded, False if nothing matched (idempotent/safe).
+        """
+        if not self.loaded:
+            return False
+
+        name: Optional[str]
+        if name_or_context is None:
+            if len(self.loaded) == 1:
+                name = next(iter(self.loaded.keys()))
+            else:
+                # Future multi-cartridge hosts will need to be explicit.
+                raise ValueError(
+                    "Multiple cartridges loaded; specify a name or LoadedCartridge to unload"
+                )
+        elif isinstance(name_or_context, LoadedCartridge):
+            name = name_or_context.manifest.name
+        elif isinstance(name_or_context, str):
+            name = name_or_context
+        else:
+            raise TypeError("name_or_context must be str, LoadedCartridge, or None")
+
+        if name not in self.loaded:
+            return False
+
+        loaded = self.loaded[name]
+        entry = loaded.entry_instance
+
+        # 1. Optional teardown hook (symmetric naming to the load-side hooks)
+        # Use the same context-first + legacy fallback as load hooks (P1-C).
+        teardown_ctx = self._make_context(loaded.manifest)
+        for hook_name in ("teardown", "unload", "cleanup"):
+            hook = getattr(entry, hook_name, None)
+            if callable(hook):
+                try:
+                    try:
+                        hook(context=teardown_ctx)
+                    except TypeError as e:
+                        if "unexpected keyword argument 'context'" in str(e):
+                            hook(world=self.world, base=self.base, manifest=loaded.manifest)
+                        else:
+                            raise
+                except Exception as e:
+                    print(f"⚠️  {hook_name} hook for cartridge '{name}' raised: {e}")
+                break
+
+        # 2. Unmount assets (RM.unmount_asset_root is already implemented and used by P1-A fixes)
+        asset_path = self._asset_root_for.pop(name, None)
+        if asset_path and self.resource_manager is not None:
+            try:
+                if hasattr(self.resource_manager, "unmount_asset_root"):
+                    self.resource_manager.unmount_asset_root(asset_path)
+            except Exception as e:
+                print(f"⚠️  Failed to unmount assets for '{name}': {e}")
+
+        # 3. Remove the python path we inserted (only the exact one we own)
+        py_path = self._python_path_for.pop(name, None)
+        if py_path and py_path in sys.path:
+            try:
+                sys.path.remove(py_path)
+            except ValueError:
+                pass  # Already gone or was never there
+
+        # 3.5 Best-effort: unregister any SaveStateProvider registered under this
+        # cartridge's name (so a later re-load of the same name succeeds without
+        # "already registered"). Cartridges may register under manifest.name or a
+        # custom key; we try the cartridge name (used by tgl_demo reference and
+        # recommended). The per-cartridge try/except guard in initialize is still
+        # good defense for the case where a provider was registered under a
+        # different key.
         if self.save_state_manager:
-            self.save_state_manager.attach_manifest(manifest)
+            try:
+                self.save_state_manager.unregister_provider(name)
+            except Exception:
+                pass  # not present, never registered, or manager doesn't support (idempotent)
 
-        entry_instance = self._instantiate_entrypoint(manifest)
-        if self.save_state_manager:
-            setattr(entry_instance, "save_state_manager", self.save_state_manager)
-        self._run_entry_hook(entry_instance, manifest)
-        loaded_modules = self._register_system_modules(manifest)
+        # 4. Drop the record
+        del self.loaded[name]
 
-        context = LoadedCartridge(
-            manifest=manifest,
-            archive_path=archive_path,
-            extract_path=extract_dir,
-            entry_instance=entry_instance,
-            system_modules=loaded_modules,
-            save_state_manager=self.save_state_manager,
-        )
-
-        self.loaded[manifest.name] = context
-        return context
+        print(f"🧹 Unloaded cartridge '{name}'")
+        return True
 
     def _read_manifest(self, zf: zipfile.ZipFile) -> CartridgeManifest:
         try:
@@ -224,15 +416,188 @@ class CartridgeLoader:
             raise CartridgeLoadError(f"Failed to instantiate entrypoint '{manifest.entrypoint}': {exc}") from exc
         return instance
 
-    def _run_entry_hook(self, entry_instance, manifest: CartridgeManifest):
+    def _make_context(self, manifest: CartridgeManifest) -> CartridgeContext:
+        """Construct a CartridgeContext for the current load state.
+
+        This centralizes exposure of world/base + the managers the loader was
+        constructed with (RM for assets, SaveStateManager, and self for future
+        self-unload).
+        """
+        return CartridgeContext(
+            world=self.world,
+            base=self.base,
+            manifest=manifest,
+            resource_manager=self.resource_manager,
+            save_state_manager=self.save_state_manager,
+            loader=self,
+        )
+
+    def _check_engine_requirement(self, manifest: CartridgeManifest) -> None:
+        """Enforce manifest 'cartridge.requires.engine' if present (P1-F).
+
+        Called immediately after manifest parsing in both load_directory and
+        load_archive, before any side effects (sys.path, asset mounts, hooks).
+        Uses CartridgeValidationError for consistency with other manifest issues.
+        """
+        if not getattr(manifest, "engine_requirement", None):
+            return
+
+        current = self._get_current_engine_version()
+        if not self._requirement_satisfied(current, manifest.engine_requirement):
+            raise CartridgeValidationError(
+                f"Cartridge '{manifest.name}' requires engine "
+                f"{manifest.engine_requirement} but this engine is {current}"
+            )
+
+    def _get_current_engine_version(self) -> str:
+        """Best-effort engine version for requirement checks.
+
+        Prefers installed distribution metadata; falls back to the module attr
+        we expose (engine.__version__) and finally a safe default.
+        """
+        try:
+            import importlib.metadata
+
+            return importlib.metadata.version("py2d-game-engine")
+        except Exception:
+            pass
+
+        # Fallback to the attribute we maintain on the engine package (P1-F).
+        try:
+            import engine
+
+            return getattr(engine, "__version__", "0.1.0")
+        except Exception:
+            return "0.1.0"
+
+    def _requirement_satisfied(self, current_version: str, requirement: str) -> bool:
+        """Return True if current_version satisfies the declared requirement string.
+
+        Primary path uses 'packaging' (SpecifierSet) when available (rich semver,
+        caret ranges, etc.). ^-style caret constraints (npm/semver common in manifests)
+        are converted to equivalent PEP 440 ranges (e.g. ^0.1.0 -> >=0.1.0,<0.2.0)
+        because packaging does not support ^ natively.
+        Falls back to a conservative heuristic when packaging unavailable.
+        """
+        req = (requirement or "").strip()
+        if not req:
+            return True
+
+        # Preferred: full semver support via packaging (transitive in most envs)
+        try:
+            from packaging.specifiers import SpecifierSet
+            from packaging.version import parse as parse_version
+
+            pep_req = self._caret_to_pep440(req) if req.startswith("^") else req
+            spec = SpecifierSet(pep_req)
+            return parse_version(current_version) in spec
+        except Exception:
+            pass
+
+        # Conservative fallback (no 'packaging' or parse error).
+        # Implement proper caret semantics so ^1.2.3 rejects 2.x and ^0.1.9
+        # rejects 0.1.0 (and 0.2.*), matching the _caret_to_pep440 primary path
+        # and semver rules (incl. 0.0.x patch-only).
+        if req.startswith("^"):
+            base = req[1:].strip().split()[0]
+            try:
+                base_parts = [int(x) for x in base.split(".") if x.isdigit()]
+                cur_parts = [int(x) for x in current_version.split(".") if x.isdigit()]
+                if base_parts and cur_parts:
+                    def _pad(p, n=3):
+                        return (p + [0] * n)[:n]
+                    b = _pad(base_parts)
+                    c = _pad(cur_parts)
+                    # Must be >= base
+                    if c < b:
+                        return False
+                    # Upper bound: next breaking version
+                    if b[0] >= 1:
+                        upper = (b[0] + 1, 0, 0)
+                    elif b[1] >= 1:
+                        # 0.y.z y>=1
+                        upper = (0, b[1] + 1, 0)
+                    else:
+                        # 0.0.z
+                        upper = (0, 0, (b[2] + 1) if len(b) > 2 else 1)
+                    if c >= upper:
+                        return False
+                    return True
+            except Exception:
+                pass
+            # fall through to loose contains for malformed caret
+
+        base = req.lstrip("^~>=< ").strip().split()[0]
+        if not base:
+            return True
+        return base in current_version or current_version.startswith(base)
+
+    def _caret_to_pep440(self, req: str) -> str:
+        """Convert a semver-style ^caret requirement to PEP 440 compatible range.
+
+        ^1.2.3  -> >=1.2.3,<2.0.0
+        ^0.2.3  -> >=0.2.3,<0.3.0
+        ^0.0.3  -> >=0.0.3,<0.0.4
+        ^0.1.9  -> >=0.1.9,<0.2.0
+        This lets packaging.SpecifierSet work for common manifest declarations.
+        """
+        if not req or not req.startswith("^"):
+            return req
+        ver = req[1:].strip().split()[0]
+        try:
+            parts = [int(p) for p in ver.split(".") if p.isdigit()]
+            if not parts:
+                return req
+            major = parts[0]
+            if major >= 1:
+                return f">={ver},<{major + 1}.0.0"
+            # 0.x series per semver caret:
+            # ^0.y.z (y >= 1) is >=0.y.z <0.(y+1).0
+            # ^0.0.z is >=0.0.z <0.0.(z+1)  (patch-only for 0.0)
+            if len(parts) >= 2 and parts[1] >= 1:
+                minor = parts[1]
+                return f">={ver},<0.{minor + 1}.0"
+            if len(parts) >= 3:
+                patch = parts[2]
+                return f">={ver},<0.0.{patch + 1}"
+            # degenerate 0 or 0.0
+            return f">={ver},<1.0.0"
+        except Exception:
+            return req
+
+    def _run_entry_hook(
+        self,
+        entry_instance,
+        manifest: CartridgeManifest,
+        context: CartridgeContext | None = None,
+    ):
+        ctx = context or self._make_context(manifest)
         for hook_name in ("mount", "load", "initialize"):
             hook = getattr(entry_instance, hook_name, None)
             if callable(hook):
-                hook(world=self.world, base=self.base, manifest=manifest)
+                # Transition strategy (P1-C): prefer context= (new cartridges can
+                # implement `def initialize(self, context): ...` only). Fall back to
+                # the legacy three-kw call so existing cartridges (e.g. tgl_demo)
+                # continue to work unchanged during the short transition.
+                # Only fall back on the specific "unexpected keyword argument 'context'"
+                # case; real TypeErrors raised inside the hook body are re-raised
+                # (prevents masking bugs and avoids double execution of partial side effects).
+                try:
+                    hook(context=ctx)
+                except TypeError as e:
+                    if "unexpected keyword argument 'context'" in str(e):
+                        hook(world=self.world, base=self.base, manifest=manifest)
+                    else:
+                        raise
                 break
 
-    def _register_system_modules(self, manifest: CartridgeManifest) -> List[str]:
+    def _register_system_modules(
+        self, manifest: CartridgeManifest, context: Optional["CartridgeContext"] = None
+    ) -> List[str]:
         loaded = []
+        # Use the caller's context (so initialize hook and system registers see the
+        # *same* CartridgeContext instance). Fall back to a fresh one only if not provided.
+        ctx = context or self._make_context(manifest)
         for dotted in manifest.system_modules:
             try:
                 module = importlib.import_module(dotted)
@@ -241,6 +606,15 @@ class CartridgeLoader:
 
             register_fn = getattr(module, "register", None)
             if callable(register_fn):
-                register_fn(world=self.world, base=self.base)
+                # Same transition support as entry hooks: context-first then legacy.
+                # Only fall back on the specific "unexpected keyword" case so that real
+                # TypeErrors inside the register fn are not swallowed.
+                try:
+                    register_fn(context=ctx)
+                except TypeError as e:
+                    if "unexpected keyword argument 'context'" in str(e):
+                        register_fn(world=self.world, base=self.base)
+                    else:
+                        raise
             loaded.append(dotted)
         return loaded

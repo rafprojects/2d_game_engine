@@ -17,31 +17,37 @@ python -m tools.cli.dev_setup init
 python -m tools.cli.dev_setup check
 ```
 
-### **2. Run Your First Example**
+### **2. Run Your First Cartridge (Recommended)**
 ```bash
-# Make sure you have a test image
-cp assets/player.png assets/  # Or create a simple PNG
+# Run the reference cartridge (modern primary path — canonical P1-G example)
+python main.py --cartridge examples/cartridges/tgl_demo
 
-# Run the main demo
-python main.py
-
-# Try an example demo
-python examples/demos/basic_sprite_demo.py
+# Create a new one with the scaffold (P1-D)
+py2d-cartridge init "My Game"
+cd my-game
+python /path/to/2d_game_engine/main.py --cartridge .   # run from the engine source checkout root
+# (main.py is not an importable module; `python -m main` only works from the engine tree)
 ```
+
+`tgl_demo` is the canonical reference exercising the complete cartridge surface (manifest, pack/load, hot-restart, providers, dev tooling, etc.). Use it to validate your understanding and as the model for new work.
+
+(For the legacy direct demo: `python main.py` or demos in `examples/demos/`.)
 
 ### **3. Explore the Structure**
 - **Engine Core**: `engine/` - The main game engine modules
-- **Examples**: `examples/` - Learn from working code
-- **Documentation**: `docs/` - Comprehensive guides
-- **Tools**: `tools/cli/` - Development utilities
+- **Cartridges** (primary): `examples/cartridges/` - Self-contained games (config/cartridge.json + private assets + python package with entrypoint)
+- **Legacy examples**: `examples/games/` and `examples/demos/`
+- **Documentation**: `docs/` - Comprehensive guides (start with cartridge_loader_guide.md)
+- **Tools**: `tools/cli/` - Development utilities (py2d-cartridge is now the main authoring CLI)
 
 ## 📚 **Learning Path**
 
 ### **Beginner (New to the engine)**
-1. **Read** [`README.md`](../README.md) for project overview
-2. **Try** examples in `examples/tutorials/`
-3. **Follow** sprite animation guide: [`sprite_animation_guide.md`](sprite_animation_guide.md)
-4. **Build** your first simple game with `py2d-engine new-game`
+1. **Read** the "Cartridge Quick Start" in [`README.md`](../README.md)
+2. **Run** a cartridge: `python main.py --cartridge examples/cartridges/tgl_demo`
+3. **Create** one: `py2d-cartridge init "My First Cartridge"`
+4. **Follow** `docs/guides/cartridge_loader_guide.md` and the tgl_demo README
+5. **(Legacy)** Build with `py2d-engine new-game` only if you need the old embedded layout
 
 ### **Intermediate (Ready to contribute)**
 1. **Study** the ECS architecture in `engine/core/`
@@ -78,6 +84,9 @@ python examples/demos/movement_demo.py
 ```
 
 ### **Creating New Features**
+For cartridge-specific code, work inside a cartridge's `python/<slug>/` (components/systems) after `py2d-cartridge init`.
+
+For engine extensions:
 ```bash
 # Generate component template
 py2d-engine new-component MyComponent --with-test
@@ -88,7 +97,7 @@ py2d-engine new-system MySystem --events
 # Add to appropriate engine module
 # Write unit tests
 # Update documentation
-# Test with examples
+# Test with examples or a cartridge
 ```
 
 ## 🎯 **Key Concepts**
