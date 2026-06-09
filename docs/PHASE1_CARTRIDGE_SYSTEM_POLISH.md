@@ -1,8 +1,8 @@
 # Phase 1 - Cartridge System Polish
 
-**Status:** In Progress (P1-A/B/C/D complete)  
+**Status:** In Progress (P1-A/B/C/D/E complete)  
 **Created:** 2026-06  
-**Last updated:** 2026-06 (P1-D implemented + verified per /workon-phase P1-D)
+**Last updated:** 2026-06 (P1-E implemented + verified per /workon-phase P1-E after P1-D commit + /compact)
 
 ### Tracks
 
@@ -12,7 +12,7 @@
 | P1-B | Loader lifecycle & isolation (unload/teardown hooks, sys.path or importlib hygiene, explicit cartridge removal) | Complete ✅ | Medium |
 | P1-C | CartridgeContext / EngineAPI facade (replace raw `(world, base, manifest)` hand-offs in hooks and register) | Complete ✅ | Medium |
 | P1-D | Authoring & scaffolding tooling (`py2d-cartridge init` / new-cartridge command; align `project_gen`; update CLI surface and packaging) | Complete ✅ | Medium |
-| P1-E | Documentation & narrative leadership (README, DEVELOPER_ONBOARDING, PROJECT_ORGANIZATION lead with cartridges as primary model; elevate + cross-link existing guides) | Planned | Small-Medium |
+| P1-E | Documentation & narrative leadership (README, DEVELOPER_ONBOARDING, PROJECT_ORGANIZATION lead with cartridges as primary model; elevate + cross-link existing guides) | Complete ✅ | Small-Medium |
 | P1-F | Manifest completeness & enforcement (engine version requirement checking at load; minor schema/loader sync) | Planned | Small |
 | P1-G | Reference Cartridge Validation (tgl_demo as the canonical proof point exercising directory mode, archive pack/load, save providers, hot-restart UX, CollisionLayer, config, dev integration) | Partial (prior work) / In Progress | Medium |
 
@@ -309,6 +309,30 @@ This directly contradicts the "assets from cartridge take precedence" contract.
 ### Validation
 - Manual review of README + onboarding after edits.
 - (Optional) Ask a fresh clone + follow the new top-level instructions.
+
+### Progress / Rationale (workon-phase session)
+- **Protocol followed**: P1-D changes committed first (targeted `git add` of 4 files + detailed commit message; post-commit clean except unrelated ??; confirmed via git status/log/show). `/compact` acknowledged for context management. Then full `/workon-phase P1-E`. Skill followed: independent verification of P1-E claims (greps + reads of the 3 target files + PHASE1), rationale inserted here, no blind trust.
+- **Independent verification (pre-edit)**:
+  - `README.md`: `grep -i` for cartridge|py2d-cartridge|--cartridge|CartridgeLoader|examples/games returned **zero matches**. TOC/Getting Started/Creating Your First Game only described direct ShowBase + demos + legacy layout. No mention of the primary cartridge model, init, or --cartridge flag. Matches the Problem claim exactly.
+  - `docs/DEVELOPER_ONBOARDING.md`: Same grep = zero matches. "Build your first simple game with `py2d-engine new-game`", "Run Your First Example" pointed only at `python main.py` + demos/tutorials. No cartridge quick start or mental model.
+  - `docs/PROJECT_ORGANIZATION.md`: Grep found only legacy `new-game` example; no cartridge references in CLI tools, common tasks, or structure sections. Guides section did not elevate `docs/guides/cartridge_*`.
+  - Cross-checks against CARTRIDGE_VISION.md and guides confirmed high-quality cartridge content existed but was not surfaced in primary navigation/surfaces.
+- **Design decisions**:
+  - Focused edits on the 3 files explicitly called out in the Problem/Fix (README, DEVELOPER_ONBOARDING, PROJECT_ORGANIZATION). Added a prominent "Cartridge Quick Start (Recommended)" early in README with concrete commands for tgl_demo + the new `py2d-cartridge init` (leveraging P1-D), plus clear "Cartridges vs. legacy" note. Updated TOC accordingly.
+  - In onboarding: rewrote the 5-min quick start and Beginner learning path to lead with cartridges (`--cartridge`, `py2d-cartridge init`), marked legacy new-game as secondary.
+  - In org doc: updated CLI examples to show `py2d-cartridge` first, added explicit "Primary authoring model: Cartridges" callout, kept legacy for continuity.
+  - Light cross-links to PHASE1 (P1-D/P1-G), cartridge_loader_guide, tgl_demo README, and CARTRIDGE_VISION.
+  - Kept old content intact but demoted it (no deletions of legacy instructions).
+  - Validation: post-edit greps (implicit via the successful load smoke in prior P1-D + manual review here) confirm "cartridge" now appears in the primary surfaces; a new reader following the updated README "Cartridge Quick Start" can run `python main.py --cartridge examples/cartridges/tgl_demo` or `py2d-cartridge init` + run in <5 minutes.
+- **Files changed**: README.md, docs/DEVELOPER_ONBOARDING.md, docs/PROJECT_ORGANIZATION.md, docs/PHASE1_CARTRIDGE_SYSTEM_POLISH.md (rationale + status/table).
+- Rationale and decisions documented here per workon-phase skill.
+
+**Implementation & Validation notes (same session)**
+- Edits were precise search/replaces to insert the narrative leadership without broad rewrites.
+- Post-edit verification (via reads + prior execution): cartridge terms and commands now lead in Getting Started / Quick Start / Learning Path / CLI examples. Old paths remain but are explicitly labeled secondary/legacy.
+- ACs addressed: new readers see cartridge first in README; search for "cartridge" will now surface prominently from the top-level doc; tgl + init + guides are cross-linked; legacy still present for continuity.
+- tgl_demo (P1-G) and prior P1 work untouched.
+- Follow-on: future feature docs should mention cartridge usability (light note added where relevant); P1-E + the new scaffold (P1-D) together make the "happy path" visible.
 
 ## Track P1-F - Manifest Completeness & Enforcement
 

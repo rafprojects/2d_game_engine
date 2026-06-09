@@ -26,7 +26,8 @@ The engine includes (or will include) a powerful sprite animation system that su
   - [Getting Started](#getting-started)
     - [Prerequisites](#prerequisites)
     - [Installation](#installation)
-    - [Running an Example](#running-an-example)
+    - [Cartridge Quick Start (Recommended)](#cartridge-quick-start-recommended)
+    - [Running an Example (Legacy Path)](#running-an-example-legacy-path)
   - [Engine Architecture](#engine-architecture)
     - [Directory Structure](#directory-structure)
     - [Key Modules](#key-modules)
@@ -127,11 +128,33 @@ The engine includes an **Event System** (`EventManager` and `Event` base class) 
    pip install -r requirements.txt
    ```
 
-### Running an Example
+### Cartridge Quick Start (Recommended)
 
-The `main.py` file usually contains a basic example or entry point to test the engine.
+The primary way to build and run games is with **cartridges** — self-contained bundles with their own code, assets, and manifest.
 
-1. **Ensure you have a test asset:** The default `main.py` might try to load an image like `assets/player.png`. Create a simple PNG image (e.g., 32x32 pixels) and save it in an `assets` directory in the project root.
+```bash
+# Run the reference cartridge (The Guardian Legend-inspired demo)
+python main.py --cartridge examples/cartridges/tgl_demo
+
+# Or create your own (see P1-D tooling)
+py2d-cartridge init "My First Game"
+cd my-first-game
+py2d-cartridge .                 # pack (optional for dev)
+python -m main --cartridge .     # or full path to engine main.py
+```
+
+See:
+- `docs/guides/cartridge_loader_guide.md`
+- `examples/cartridges/tgl_demo/README.md`
+- `docs/PHASE1_CARTRIDGE_SYSTEM_POLISH.md` (P1-D for scaffolding, P1-G for the reference)
+
+**Cartridges vs. legacy `examples/games/`**: The cartridge model (with `config/cartridge.json`, private `assets/`, `python/<pkg>/entrypoint.py` implementing `initialize(context)`, `py2d-cartridge` pack) is the modern, primary authoring path. The old direct layout under `examples/games/` is still supported for compatibility but is no longer the advertised default.
+
+### Running an Example (Legacy Path)
+
+The `main.py` file can still run a basic built-in demo for quick engine tests.
+
+1. **Ensure you have a test asset:** ...
 
 2. **Run the main script:**
 
@@ -139,7 +162,7 @@ The `main.py` file usually contains a basic example or entry point to test the e
    python main.py
    ```
 
-   This should launch a Panda3D window, hopefully displaying the test asset if everything is configured correctly.
+   For the full modern experience, prefer the cartridge quick start above.
 
 ## Engine Architecture
 
@@ -190,9 +213,11 @@ The `main.py` file usually contains a basic example or entry point to test the e
 - **`engine.graphics.*`**: Modules for rendering, including `SpriteComponent` and `RenderSystem`.
 - **`main.py`**: The entry point that initializes Panda3D (`ShowBase`), the `World`, and adds initial systems and entities.
 
-## Creating Your First Game
+## Creating Your First Game (Legacy Direct Approach)
 
-Here\'s a conceptual guide to building a game with this engine:
+**Note (P1-E):** The modern, recommended way to create games is with the **cartridge system** (see "Cartridge Quick Start" above, `py2d-cartridge init`, and `examples/cartridges/tgl_demo`). This section documents the older direct/embedded approach under `examples/games/` for continuity; it is now secondary.
+
+Here's a conceptual guide to building a game with this engine using the legacy layout:
 
 ### 1. Setting up the Game Class
 

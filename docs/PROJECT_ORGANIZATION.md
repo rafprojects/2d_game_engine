@@ -106,14 +106,21 @@ python tests/integration/test_movement_system.py
 
 ## 🛠️ **Development Tools**
 
+**Primary authoring model**: Cartridges (see `py2d-cartridge init`, `examples/cartridges/`, and `docs/guides/cartridge_loader_guide.md`). The cartridge layout (`config/cartridge.json` + `assets/` + `python/<pkg>/entrypoint.py` implementing the lifecycle hooks) is the supported way to build distributable games. Legacy direct usage under `examples/games/` is secondary.
+
 ### **CLI Tools** (`tools/cli/`)
 ```bash
 # Asset management
 python -m tools.cli.asset_tools validate
 python -m tools.cli.asset_tools organize
 
-# Project generation
-python -m tools.cli.project_gen new-game "My Game"
+# Cartridge authoring (primary)
+py2d-cartridge init "My Game"
+py2d-cartridge .                 # from inside the cartridge dir to pack
+
+# Project generation (legacy embedded games + component/system templates)
+python -m tools.cli.project_gen new-cartridge "My Game"  # or py2d-cartridge init
+python -m tools.cli.project_gen new-game "My Game"       # legacy
 python -m tools.cli.project_gen new-component
 python -m tools.cli.project_gen new-system
 
