@@ -75,7 +75,7 @@ class CriticalFixesTest(ShowBase):
         # Test valid sprite creation
         try:
             player_entity = self.world.create_entity("test_player")
-            transform = TransformComponent(position=Vec2(0, 0), scale=Vec2(1, 1))
+            transform = TransformComponent(x=0.0, y=0.0, scale_x=1.0, scale_y=1.0)
             sprite = SpriteComponent(image_path=test_sprite_path, layer=1)
             
             self.world.add_component(player_entity.id, transform)

@@ -27,7 +27,7 @@ from panda3d.core import Vec2, Filename
 import os
 
 from engine.core.system import World
-from engine.core.components.transform_component import TransformComponent
+from engine.graphics.components.transform_component import TransformComponent
 from engine.core.components.movement_component import MovementComponent
 from engine.core.systems.movement_system import MovementSystem
 from engine.graphics.components.sprite_component import SpriteComponent
@@ -91,7 +91,7 @@ class MovementTweeningDemo(ShowBase):
         self.player_entity = self.world.create_entity("tweening_player")
         
         # Add core components
-        transform = TransformComponent(position=Vec2(0, 0), scale=Vec2(1, 1), rotation=0.0)
+        transform = TransformComponent(x=0.0, y=0.0, scale_x=1.0, scale_y=1.0, rotation=0.0)
         self.world.add_component(self.player_entity.id, transform)
         
         # Add movement component with smooth settings
@@ -113,7 +113,7 @@ class MovementTweeningDemo(ShowBase):
         # Add tweening component if available
         if TWEENING_AVAILABLE:
             tween_comp = MovementTweenComponent()
-            tween_comp.set_base_transform(transform.position, transform.scale, transform.rotation)
+            tween_comp.set_base_transform(Vec2(transform.x, transform.y), Vec2(transform.scale_x, transform.scale_y), transform.rotation)
             tween_comp.enable_juice_effects()  # Enable all visual effects
             self.world.add_component(self.player_entity.id, tween_comp)
             print("✅ Tweening effects enabled")

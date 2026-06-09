@@ -248,7 +248,7 @@ enemy_entity = self.world.create_entity()
 Define what an entity *is* by adding components to it.
 
 ```python
-from engine.core.components.transform_component import TransformComponent
+from engine.graphics.components.transform_component import TransformComponent
 from engine.graphics.components.sprite_component import SpriteComponent
 from engine.input.components.input_component import InputComponent
 from panda3d.core import Vec2

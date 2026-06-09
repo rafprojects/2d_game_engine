@@ -52,7 +52,8 @@ class MockNodePath:
         return self.name
         
     def setPos(self, x, y, z=0):
-        self.position = Vec2(x, z)
+        # Use (x, y) for 2D position to match common expectations and real NodePath usage in 2D contexts (y as second axis, not z).
+        self.position = Vec2(x, y)
         
     def setScale(self, x, y=None, z=None):
         if y is None:

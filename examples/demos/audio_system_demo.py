@@ -36,7 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from direct.showbase.ShowBase import ShowBase
 from panda3d.core import Vec2, Vec3
 from engine.core.system import World
-from engine.core.components.transform_component import TransformComponent
+from engine.graphics.components.transform_component import TransformComponent
 from engine.graphics.components.sprite_component import SpriteComponent
 from engine.graphics.systems.render_system import RenderSystem
 from engine.input.components.input_component import InputComponent
@@ -103,7 +103,7 @@ class AudioDemo(ShowBase):
         # Transform component
         self.world.add_component(
             self.player.id,
-            TransformComponent(position=Vec2(0, 0), scale=Vec2(50, 50))
+            TransformComponent(x=0.0, y=0.0, scale_x=50.0, scale_y=50.0)
         )
         
         # Visual component (if assets exist)
@@ -229,7 +229,7 @@ class AudioDemo(ShowBase):
             # Position
             self.world.add_component(
                 entity.id,
-                TransformComponent(position=position)
+                TransformComponent(x=position.x, y=position.y)
             )
             
             # 3D ambient sound
@@ -348,7 +348,8 @@ class AudioDemo(ShowBase):
             movement.y -= move_speed * dt
             
         if movement.length() > 0:
-            transform_comp.position += movement
+            transform_comp.x += movement.x
+            transform_comp.y += movement.y
             
     def next_music_track(self):
         """Switch to next music track."""

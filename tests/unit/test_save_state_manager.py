@@ -96,10 +96,10 @@ def test_delete_removes_save(tmp_path):
     assert list(manager.list_saves()) == []
 
 
-def test_duplicate_provider_name_errors():
+def test_duplicate_provider_name_errors(tmp_path):
     world = DummyWorld()
     provider = MockProvider()
-    manager = SaveStateManager(world)
+    manager = SaveStateManager(world, storage_root=tmp_path / "saves_dup")
     manager.register_provider("mock", provider)
 
     with pytest.raises(SaveStateError):

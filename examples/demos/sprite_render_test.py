@@ -7,13 +7,13 @@ from panda3d.core import CardMaker, TransparencyAttrib, Vec4, Filename, loadPrcF
 import os
 import sys
 
-# Add parent directory to path for imports
+# Add repo root to path for imports (examples/demos/ -> repo root)
 script_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(script_dir)
-sys.path.append(parent_dir)
+repo_root = os.path.dirname(os.path.dirname(os.path.dirname(script_dir)))
+sys.path.insert(0, repo_root)
 
 from engine.core.system import World
-from engine.core.components.transform_component import TransformComponent
+from engine.graphics.components.transform_component import TransformComponent
 from engine.graphics.components.sprite_component import SpriteComponent
 from engine.graphics.systems.render_system import RenderSystem
 
@@ -63,7 +63,7 @@ class SpriteRenderTest(ShowBase):
         
         # Add transform component - use Vec2 for position and scale in 2D
         from panda3d.core import Vec2
-        transform = TransformComponent(position=Vec2(0, 0), scale=Vec2(1, 1))
+        transform = TransformComponent(x=0.0, y=0.0, scale_x=1.0, scale_y=1.0)
         self.world.add_component(player_entity.id, transform)
         
         # Add sprite component

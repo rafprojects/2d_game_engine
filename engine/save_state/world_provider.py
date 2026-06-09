@@ -93,9 +93,9 @@ class WorldSaveProvider:
             )
         try:
             obj: Any = importlib.import_module(module_name)
-        except ModuleNotFoundError as exc:
+        except (ImportError, ModuleNotFoundError) as exc:
             raise SaveStateError(
-                f"Cannot restore component {key!r}: module {module_name!r} not found. "
+                f"Cannot restore component {key!r}: module {module_name!r} not found or import failed. "
                 "The component may have been moved or renamed. "
                 "Register a replacement via WorldSaveProvider.register_component()."
             ) from exc
@@ -132,7 +132,21 @@ class WorldSaveProvider:
     def _capture_component(self, component: Any) -> Dict[str, Any]:
         to_dict = getattr(component, "to_dict", None)
         if callable(to_dict):
-            return dict(to_dict())
+            raw = dict(to_dict())
+            data: Dict[str, Any] = {}
+            bad_keys = []
+            for name, value in raw.items():
+                if name in self.SKIP_ATTRS or not _is_serializable(value):
+                    if not _is_serializable(value):
+                        bad_keys.append(name)
+                    continue
+                data[name] = list(value) if isinstance(value, tuple) else value
+            if bad_keys:
+                raise SaveStateError(
+                    f"Component {type(component).__name__}.to_dict() returned non-serializable value(s) "
+                    f"for key(s): {bad_keys}. Only primitives, lists, and dicts of primitives are allowed."
+                )
+            return data
         if dataclasses.is_dataclass(component):
             source = {
                 field.name: getattr(component, field.name)

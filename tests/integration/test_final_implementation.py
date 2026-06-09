@@ -69,7 +69,7 @@ class FinalTest(ShowBase):
         entity = self.world.create_entity("test_static")
         
         # Use scale=1.0 which should now produce a visible sprite
-        transform = TransformComponent(position=Vec2(-200, 0), scale=Vec2(1, 1))
+        transform = TransformComponent(x=-200.0, y=0.0, scale_x=1.0, scale_y=1.0)
         sprite = SpriteComponent(image_path=player_sprite_path, layer=1)
         
         self.world.add_component(entity.id, transform)
@@ -96,7 +96,7 @@ class FinalTest(ShowBase):
             # Create animated sprite entity
             entity = self.world.create_entity("test_animated")
             
-            transform = TransformComponent(position=Vec2(200, 0), scale=Vec2(1, 1))
+            transform = TransformComponent(x=200.0, y=0.0, scale_x=1.0, scale_y=1.0)
             sprite = SpriteComponent(image_path=sprite_sheet_path, sprite_sheet=sprite_sheet, layer=1)
             
             # Start animation

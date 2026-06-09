@@ -6,8 +6,9 @@ This demonstrates the key features without graphics.
 
 import sys
 import os
-# Add the project root to Python path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Add the project root to Python path (two levels up from examples/demos/)
+repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, repo_root)
 
 from panda3d.core import Vec2
 from engine.core.system import World
@@ -40,7 +41,7 @@ def demonstrate_movement_system():
     world.add_component(entity.id, movement)
     
     print(f"✅ Created entity '{entity.name}' with movement capabilities")
-    print(f"   Initial position: {transform.position}")
+    print(f"   Initial position: {transform.get_position()}")
     print(f"   Base speed: {movement.base_speed}")
     
     # Demonstrate movement

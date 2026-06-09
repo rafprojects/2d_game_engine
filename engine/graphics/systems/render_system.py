@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from panda3d.core import CardMaker, NodePath, PandaNode, TransparencyAttrib, Texture, TextureStage
+from panda3d.core import CardMaker, NodePath, TransparencyAttrib, Texture, TextureStage
 
 from engine.core.system import System
 from engine.graphics.components.transform_component import TransformComponent

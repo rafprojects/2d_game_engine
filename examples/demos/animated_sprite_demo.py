@@ -10,7 +10,7 @@ parent_dir = os.path.dirname(script_dir)
 sys.path.append(parent_dir)
 
 from engine.core.system import World
-from engine.core.components.transform_component import TransformComponent
+from engine.graphics.components.transform_component import TransformComponent
 from engine.graphics.components.sprite_component import SpriteComponent
 from engine.graphics.systems.render_system import RenderSystem
 from engine.input.components.input_component import InputComponent
@@ -56,7 +56,7 @@ class AnimatedSpriteDemo(ShowBase):
             # Create a static player entity
             player_entity = self.world.create_entity("player_static")
             self.world.add_component(player_entity.id, 
-                TransformComponent(position=Vec2(0, 0), scale=Vec2(100, 100)))
+                TransformComponent(x=0.0, y=0.0, scale_x=100.0, scale_y=100.0))
             self.world.add_component(player_entity.id, 
                 SpriteComponent(image_path=player_sprite_path, layer=1))
             
@@ -93,7 +93,7 @@ class AnimatedSpriteDemo(ShowBase):
             # Create an animated player entity
             player_entity = self.world.create_entity("player_animated")
             self.world.add_component(player_entity.id, 
-                TransformComponent(position=Vec2(0, 0), scale=Vec2(100, 100)))
+                TransformComponent(x=0.0, y=0.0, scale_x=100.0, scale_y=100.0))
             
             # Create the sprite component with the sprite sheet
             # We need to provide both the image_path and sprite_sheet
@@ -154,9 +154,9 @@ class AnimatedSpriteDemo(ShowBase):
                     # In aspect2d, coordinates are normalized, so we need smaller movement values
                     move_speed = 1.0 * dt  # 1 unit per second (appropriate for aspect2d)
                     if moving_left:
-                        transform_comp.position.x -= move_speed
+                        transform_comp.x -= move_speed
                     if moving_right:
-                        transform_comp.position.x += move_speed
+                        transform_comp.x += move_speed
                     
                     # Animation state machine
                     current_anim = sprite_comp.current_animation
