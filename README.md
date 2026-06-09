@@ -133,7 +133,7 @@ The engine includes an **Event System** (`EventManager` and `Event` base class) 
 The primary way to build and run games is with **cartridges** — self-contained bundles with their own code, assets, and manifest.
 
 ```bash
-# Run the reference cartridge (The Guardian Legend-inspired demo)
+# Run the reference cartridge (The Guardian Legend-inspired demo — canonical P1-G example)
 python main.py --cartridge examples/cartridges/tgl_demo
 
 # Or create your own (see P1-D tooling)
@@ -143,10 +143,12 @@ py2d-cartridge .                 # pack (optional for dev)
 python -m main --cartridge .     # or full path to engine main.py
 ```
 
+`tgl_demo` (`examples/cartridges/tgl_demo`) is the **canonical reference cartridge** for cartridge system validation (P1-G). It exercises the full modern surface end-to-end (manifest, dir + .car, context, assets, visual hitboxes, CollisionLayer, dev tooling, hot-restart via `reset()`, SaveStateProvider, etc.) and is the live canary for the loader and related polish.
+
 See:
 - `docs/guides/cartridge_loader_guide.md`
-- `examples/cartridges/tgl_demo/README.md`
-- `docs/PHASE1_CARTRIDGE_SYSTEM_POLISH.md` (P1-D for scaffolding, P1-G for the reference)
+- `examples/cartridges/tgl_demo/README.md` (dev loop, hotkeys, reset contract, packaging)
+- `docs/PHASE1_CARTRIDGE_SYSTEM_POLISH.md` (P1-D scaffolding + P1-G reference validation)
 
 **Cartridges vs. legacy `examples/games/`**: The cartridge model (with `config/cartridge.json`, private `assets/`, `python/<pkg>/entrypoint.py` implementing `initialize(context)`, `py2d-cartridge` pack) is the modern, primary authoring path. The old direct layout under `examples/games/` is still supported for compatibility but is no longer the advertised default.
 

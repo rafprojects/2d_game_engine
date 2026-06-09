@@ -19,7 +19,7 @@ python -m tools.cli.dev_setup check
 
 ### **2. Run Your First Cartridge (Recommended)**
 ```bash
-# Run the reference cartridge (modern primary path)
+# Run the reference cartridge (modern primary path — canonical P1-G example)
 python main.py --cartridge examples/cartridges/tgl_demo
 
 # Create a new one with the scaffold (P1-D)
@@ -27,6 +27,8 @@ py2d-cartridge init "My Game"
 cd my-game
 python -m main --cartridge .
 ```
+
+`tgl_demo` is the canonical reference exercising the complete cartridge surface (manifest, pack/load, hot-restart, providers, dev tooling, etc.). Use it to validate your understanding and as the model for new work.
 
 (For the legacy direct demo: `python main.py` or demos in `examples/demos/`.)
 

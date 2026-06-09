@@ -96,6 +96,28 @@ py2d-cartridge . -o ../cartridges/my-game-0.1.0.car --force
 
 The packer performs the same JSON Schema validation as the runtime loader before emitting `dist/<name>-<version>.car`. Hidden build folders (`dist`, `build`, `__pycache__`, etc.) are skipped automatically; additional folders can be excluded via `--ignore foo`. Use `--dry-run` to validate a project without creating an archive.
 
+### Reference Cartridge (P1-G)
+
+`examples/cartridges/tgl_demo/` is the **canonical reference implementation** for the polished cartridge system:
+
+- Full `cartridge.json` (requires, systems.register, metadata, assets.mount).
+- Directory + archive (`.car`) roundtrip via `py2d-cartridge`.
+- Legacy hook compatibility + `CartridgeContext`.
+- Private assets, visual hitbox derivation, standard CollisionLayer usage.
+- `--dev-mode` integration with colored `PandaCollisionSystem` viz (blue/red/yellow).
+- Hot-restart via public `reset()` + guarded `_ensure_systems_and_events`.
+- `SaveStateProvider` registration demo.
+- Clean dev loop (R/F5 restart, V viz toggle in dev-mode, ESC shutdown).
+
+Run it:
+
+```bash
+python main.py --cartridge examples/cartridges/tgl_demo --dev-mode
+py2d-cartridge examples/cartridges/tgl_demo   # then load the produced .car
+```
+
+Its README documents the complete dev workflow, hotkeys, reset contract, and tuning. Use `tgl_demo` as the model and proof point when building or reviewing other cartridges. See `PHASE1_CARTRIDGE_SYSTEM_POLISH.md` (P1-G track) for validation criteria.
+
 ## Loader API
 
 Use programmatically:

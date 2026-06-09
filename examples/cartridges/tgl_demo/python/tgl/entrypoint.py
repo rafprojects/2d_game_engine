@@ -183,6 +183,35 @@ class TGLDemo:
         if not getattr(base, "dev_mode", False):
             print("   Tip: run with --dev-mode to auto-show colored collision hitbox outlines (blue/red/yellow; toggle with V). Press R or F5 to restart, ESC to quit.")
 
+        # Reference SaveStateProvider registration (P1-G canonical exercise of full surface:
+        # context/legacy, SSM attachment, provider capture for save/load scenarios).
+        # This makes tgl_demo demonstrate the complete modern cartridge features alongside
+        # its hot-restart guard, visual hitboxes, CollisionLayer, and dev tooling.
+        ssm = getattr(self, "save_state_manager", None)
+        if ssm is not None and not getattr(self, "_tgl_provider_registered", False):
+            class _TGLDemoSaveProvider:
+                """Minimal SaveStateProvider for the reference tgl_demo cartridge."""
+                def __init__(self, world):
+                    self.world = world
+
+                def capture(self):
+                    data = {"cartridge": "tgl_demo", "version": "0.1.0"}
+                    # Capture live player state if present (score / lives from PlayerComponent)
+                    for eid in list(self.world.entities):
+                        pc = self.world.get_component(eid, PlayerComponent)
+                        if pc:
+                            data["score"] = getattr(pc, "score", 0)
+                            data["lives"] = getattr(pc, "lives", 3)
+                            break
+                    return data
+
+                def restore(self, data):
+                    # Demo only — real cartridges would apply to player component / world state.
+                    pass
+
+            ssm.register_provider("tgl_demo", _TGLDemoSaveProvider(self.world))
+            self._tgl_provider_registered = True
+
     # ------------------------------------------------------------------
     # Collision handling
     # ------------------------------------------------------------------
