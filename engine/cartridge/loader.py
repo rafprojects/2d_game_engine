@@ -381,8 +381,10 @@ class CartridgeLoader:
         """Return True if current_version satisfies the declared requirement string.
 
         Primary path uses 'packaging' (SpecifierSet) when available (rich semver,
-        caret ranges, etc.). Falls back to a conservative heuristic sufficient
-        for the current 0.1.x world and common "^0.1.0" style declarations.
+        caret ranges, etc.). ^-style caret constraints (npm/semver common in manifests)
+        are converted to equivalent PEP 440 ranges (e.g. ^0.1.0 -> >=0.1.0,<0.2.0)
+        because packaging does not support ^ natively.
+        Falls back to a conservative heuristic when packaging unavailable.
         """
         req = (requirement or "").strip()
         if not req:
@@ -393,7 +395,8 @@ class CartridgeLoader:
             from packaging.specifiers import SpecifierSet
             from packaging.version import parse as parse_version
 
-            spec = SpecifierSet(req)
+            pep_req = self._caret_to_pep440(req) if req.startswith("^") else req
+            spec = SpecifierSet(pep_req)
             return parse_version(current_version) in spec
         except Exception:
             pass
@@ -421,6 +424,31 @@ class CartridgeLoader:
         if not base:
             return True
         return base in current_version or current_version.startswith(base)
+
+    def _caret_to_pep440(self, req: str) -> str:
+        """Convert a semver-style ^caret requirement to PEP 440 compatible range.
+
+        ^0.1.0  -> >=0.1.0,<0.2.0
+        ^0.1.9  -> >=0.1.9,<0.2.0
+        ^1.2.3  -> >=1.2.3,<2.0.0
+        This lets packaging.SpecifierSet work for common manifest declarations.
+        """
+        if not req.startswith("^"):
+            return req
+        ver = req[1:].strip().split()[0]
+        try:
+            parts = [int(p) for p in ver.split(".") if p.isdigit()]
+            if not parts:
+                return req
+            major = parts[0]
+            if major == 0:
+                if len(parts) > 1:
+                    minor = parts[1]
+                    return f">={ver},<{major}.{minor + 1}.0"
+                return f">={ver},<1.0.0"
+            return f">={ver},<{major + 1}.0.0"
+        except Exception:
+            return req
 
     def _run_entry_hook(
         self,

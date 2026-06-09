@@ -538,8 +538,8 @@ class Cartridge:
         print("  Tip: use --dev-mode and press V to see collision outlines if the host supports it.")
 
 
-# Optional: a reset() makes hot-restart (R/F5) nice during development, like tgl_demo.
-# The loader/main will call entry.reset() on hot-restart requests if present.
+    # Optional: a reset() makes hot-restart (R/F5) nice during development, like tgl_demo.
+    # The loader/main will call entry.reset() on hot-restart requests if present.
     def reset(self):
         print("🔄 (scaffold) reset() called — in a real cartridge you would clear/re-spawn here.")
         # For the absolute minimal we leave entities as-is; a full cartridge would

@@ -487,6 +487,37 @@ Comments and resolutions (all accepted as valid issues introduced or exposed by 
 
 All fixes are small, targeted, and preserve the P1 intent (tgl_demo as canary with minimal surface addition, no broad rewrites). Tests (cartridge suite) will be re-run before commit. This addresses the PR feedback surfaced on the accumulated PHASE1 changes.
 
+**PR #4 Copilot Review - Second Round (post re-review request)**
+
+After the first round of fixes + push + Copilot re-review request, 3 additional unresolved Copilot comments were received on the updated PR.
+
+Per git-address-comments skill (repeat of protocol):
+- Verified branch still matches (feat/phase1-cartridge-system-polish).
+- Fetched unresolved threads (include_outdated=true).
+- Addressed immediately (all accepted).
+- Implemented via edits.
+- Extended this rationale block in PHASE1 doc.
+- Will commit/push/resolve threads (and may request another review if needed).
+
+New comments and resolutions:
+
+7. **tools/cli/cartridge_pack.py:547** (IndentationError in scaffolded entrypoint template)
+   - Issue: The two comment lines before `def reset(self):` in the entrypoint_code template string were at module-level indentation (0 spaces). This caused the generated `class Cartridge:` to be closed by the dedent, making the indented `def reset` cause IndentationError on import/run of scaffolds from `py2d-cartridge init`.
+   - Fix: Indented the two `# Optional:` / `# The loader...` comments to 4 spaces inside the template string (so they stay inside the Cartridge class in generated code; comments are valid there). Also ensured the `def reset` remains properly indented under the class.
+   - Rationale: Accepted. This was a template formatting bug exposed in the P1-D scaffolding generator. The reset was intended as a method on the Cartridge class (like in tgl_demo). Without the fix, all new cartridges would fail to even import.
+
+8. **engine/cartridge/loader.py:399** (packaging.SpecifierSet doesn't support ^ caret)
+   - Issue: Direct `SpecifierSet(req)` where req="^0.1.0" (or similar) always fails (packaging follows PEP 440, not npm caret). Thus caret requirements always fell through to the heuristic fallback. The fallback also didn't respect patch lower-bounds (e.g. ^0.1.9 would accept 0.1.0).
+   - Fix: Added `_caret_to_pep440(req)` helper that converts ^X.Y.Z to equivalent PEP 440 `>=X.Y.Z,<(X+1).0.0` (with special case for 0.x: >=0.a.b,<0.(a+1).0 ). Use it in the packaging try block: `pep_req = self._caret_to_pep440(req) if ... else req; spec=SpecifierSet(pep_req)`. Updated docstring and kept the (improved) fallback.
+   - Rationale: Accepted. Critical for P1-F manifest enforcement to actually work with the common "requires.engine": "^0.1.0" declarations when the packaging lib is present (the common case). Matches the spirit of the original suggestion in the comment.
+
+9. **engine/graphics/systems/render_system.py:57** (texture cache stale after unmount)
+   - Issue: Cache in `_load_texture` was keyed solely by the declared `image_path`. After `ResourceManager.unmount_asset_root` (P1-B) or loading a different cartridge that declares the same relative path, `resolve_asset_path` could return a different file, but the old Texture would still be returned from cache. Leads to wrong/stale visuals when switching cartridges in one process.
+   - Fix: Compute `load_path = resolved or image_path` *before* the cache check. Key the `self.textures` dict (and lookup) by the actual `load_path` used for `loadTexture`. When no RM, load_path==image_path (backward compat). Updated docstring. (Egg models are not cached, so unaffected.)
+   - Rationale: Accepted. This is a correctness bug for cartridge lifecycle (P1-B unload + multi-cartridge scenarios in future P4). By keying on the resolved file path, different mounts naturally get separate (or correctly refreshed) cache entries without needing explicit cache invalidation on unmount.
+
+All new fixes are small and preserve existing behavior where no RM/cartridge mounts are involved. Re-ran relevant tests mentally + will verify via pre-push on commit. These close the second round of Copilot feedback on PR #4.
+
 ## Context & Progress So Far (Hybrid)
 
 - Substantial prior execution on the tgl_demo cartridge (hitbox derivation bound to visual sprites via helper + scale, player damage blink/tint, --dev-mode + colored collision overlays with proper LineSegs baking, hot-restart via cartridge entrypoint `.reset()`, clean shutdown path, CollisionLayer standardization, config-driven sizes/scales, guarded wiring to support repeated initialize/reset).
