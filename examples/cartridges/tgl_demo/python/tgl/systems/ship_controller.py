@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import uuid
 
-from panda3d.core import Vec2
+from panda3d.core import Vec2, Vec4
 
 from engine.core.system import System
 from engine.graphics.components.transform_component import TransformComponent
@@ -11,17 +11,18 @@ from engine.graphics.components.sprite_component import SpriteComponent
 from engine.input.components.input_component import InputComponent
 from engine.physics.components.collider_component import ColliderComponent
 from engine.physics.typesg import ColliderType
+from engine.physics.typesg import CollisionLayer, mask_of
 
 from tgl.components.player_component import PlayerComponent
 from tgl.components.enemy_component import EnemyComponent
 
-# Collision layer constants
-LAYER_PLAYER = 1
-LAYER_ENEMY = 2
-LAYER_BULLET = 4
+# Use engine-standard layers (kept for the handful of raw ints still needed by ColliderComponent)
+LAYER_PLAYER = int(CollisionLayer.PLAYER)
+LAYER_ENEMY = int(CollisionLayer.ENEMY)
+LAYER_BULLET = int(CollisionLayer.PLAYER_BULLET)
 
-# Bullet collides with enemies; enemy layer bit = (1 << (LAYER_ENEMY - 1))
-BULLET_COLLISION_MASK = 1 << (LAYER_ENEMY - 1)  # = 2
+# Bullet mask built the recommended way
+BULLET_COLLISION_MASK = mask_of(CollisionLayer.ENEMY)
 
 
 def _bullet_sprite_path() -> str:
@@ -41,8 +42,14 @@ class ShipControllerSystem(System):
         self._y_max = cfg_player.get("y_max", 0.8)
         self._fire_rate = cfg_player["fire_rate"]
         self._max_shots = cfg_player["max_shots"]
+
+        # Bullet tunables now come from config (injected with derived sizes in entrypoint)
         self._bullet_speed = cfg_bullet["speed"]
         self._bullet_lifetime = cfg_bullet["lifetime"]
+        self._bullet_scale = cfg_bullet.get("scale", 0.3)
+        # cfg_bullet["collider_size"] is a [w, h] list (or tuple) populated from the visual helper
+        bsize = cfg_bullet.get("collider_size", [0.06, 0.10])
+        self._bullet_collider_size = Vec2(bsize[0], bsize[1]) if isinstance(bsize, (list, tuple)) else Vec2(bsize, bsize)
 
     def _find_player(self) -> uuid.UUID | None:
         for entity in self.world.get_entities_with_components(PlayerComponent):
@@ -70,6 +77,25 @@ class ShipControllerSystem(System):
             player_comp.invulnerable_timer = max(0.0, player_comp.invulnerable_timer - dt)
         if player_comp.fire_cooldown > 0:
             player_comp.fire_cooldown = max(0.0, player_comp.fire_cooldown - dt)
+
+        # ------------------------------------------------------------------
+        # Player damage / invulnerability visual feedback (the "no damage animation" fix).
+        # We drive it purely from the existing invulnerable_timer so no extra state
+        # is required on PlayerComponent for the basic blink.
+        # ------------------------------------------------------------------
+        if sprite is not None:
+            if player_comp.invulnerable_timer > 0:
+                # Classic retro blink ( ~10 Hz ). Opacity keeps any future per-sprite tint intact.
+                blink_phase = int(player_comp.invulnerable_timer * 10) % 2 == 0
+                sprite.opacity = 0.35 if blink_phase else 1.0
+                # Mild reddish "damaged/hit" tint for the whole invuln window — very visible
+                # without being as aggressive as a pure red.
+                sprite.color = Vec4(1.0, 0.6, 0.6, 1.0)
+            else:
+                # Restore pristine appearance the moment i-frames end
+                if sprite.opacity != 1.0 or list(sprite.color) != [1, 1, 1, 1]:
+                    sprite.opacity = 1.0
+                    sprite.color = Vec4(1, 1, 1, 1)
 
         # Horizontal movement
         moving_left = input_comp.action_active.get("move_left", False)
@@ -117,7 +143,9 @@ class ShipControllerSystem(System):
             return
 
         bullet = self.world.create_entity("bullet")
-        self.world.add_component(bullet.id, TransformComponent(x=x, y=y + 0.08, scale_x=0.3, scale_y=0.3))
+        self.world.add_component(bullet.id, TransformComponent(
+            x=x, y=y + 0.08, scale_x=self._bullet_scale, scale_y=self._bullet_scale
+        ))
         self.world.add_component(bullet.id, SpriteComponent(image_path=_bullet_sprite_path(), layer=2))
         self.world.add_component(bullet.id, ProjectileComponent(
             velocity=Vec2(0, 1),
@@ -128,7 +156,7 @@ class ShipControllerSystem(System):
         ))
         self.world.add_component(bullet.id, ColliderComponent(
             collider_type=ColliderType.RECTANGLE,
-            size=Vec2(0.06, 0.1),
+            size=self._bullet_collider_size,
             is_trigger=True,
             collision_layer=LAYER_BULLET,
             collision_mask=BULLET_COLLISION_MASK,

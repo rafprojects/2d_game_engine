@@ -13,9 +13,11 @@ class HUDSystem(System):
     def __init__(self, world, base):
         super().__init__(world)
         self._base = base
+        # Positions chosen to be safely inside the viewport for the default ~1.067 aspect ratio.
+        # (Previous ±1.25 values could clip on the sides for the configured 1024x960 window.)
         self._score_text = OnscreenText(
             text="SCORE: 0",
-            pos=(-1.25, 0.92),
+            pos=(-0.98, 0.92),
             scale=0.06,
             align=TextNode.ALeft,
             fg=(1, 1, 1, 1),
@@ -23,7 +25,7 @@ class HUDSystem(System):
         )
         self._lives_text = OnscreenText(
             text="LIVES: 3",
-            pos=(1.25, 0.92),
+            pos=(0.98, 0.92),
             scale=0.06,
             align=TextNode.ARight,
             fg=(1, 1, 1, 1),

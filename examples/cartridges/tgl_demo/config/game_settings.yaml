@@ -15,14 +15,18 @@
 # All viewport-unit values below remain valid as long as aspect ratio stays close to 1.067.
 
 window:
-  width: 512    # pixels (2× NES horizontal: 256×2)
-  height: 480   # pixels (2× NES vertical: 240×2)
+  width: 1024    # pixels (512 = 2× NES horizontal: 256×2)
+  height: 960   # pixels (480 = 2× NES vertical: 240×2)
   # 1 unit = 240 pixels at this resolution
   # X bounds: ±1.067,  Y bounds: ±1.0
 
 player:
   health: 3           # hit points per life
   lives: 3            # starting lives
+  scale: 0.40         # Transform scale at spawn (1.0 was huge). Combined with render base_scale=0.5
+                      # and ship.egg normalization this yields a reasonable fighter footprint.
+  collider_scale_factor: 0.70 # Fraction of *visual* size used for the hitbox rect (see sprite_visual_size.py).
+                              # 0.65-0.75 is typical for "bound to visible sprite" while keeping NES-era fairness.
   speed: 1.2          # horizontal movement speed (units/sec; 288 px/sec at 512×480)
   vertical_speed: 1.2 # vertical movement speed (units/sec)
   x_limit: 0.95       # distance from center to left/right wall (units; viewport X = ±1.067)
@@ -33,8 +37,10 @@ player:
   invulnerable_duration: 1.5  # post-hit invulnerability duration (seconds)
 
 bullet:
-  speed: 2.0    # projectile speed (units/sec; 480 px/sec at 512×480)
+  speed: 0.5    # projectile speed (units/sec; 480 px/sec at 512×480)
   lifetime: 2.0 # seconds before auto-despawn
+  scale: 0.25              # Transform scale for bullets (hardcoded 0.3 before).
+  collider_scale_factor: 0.60  # Tight-ish hitbox relative to the tall thin bullet visual.
 
 spawner:
   interval: 1.5          # base time between spawns (seconds)
@@ -48,8 +54,10 @@ spawner:
   difficulty_max_enemies_cap: 8   # maximum concurrent enemies at peak difficulty
 
 enemies:
-  scale: 0.8          # sprite scale (1.0 = original asset size)
-  collider_size: 0.18 # square collision box half-size... actually full size (units)
+  scale: 0.22         # Transform scale (was 0.3 or 0.8). Tuned relative to player so the ship is the
+                      # dominant but not "huge" element. Use sprite_visual_size helper for derivation.
+  collider_scale_factor: 0.80  # Fraction of the asteroid's computed visual size for its hitbox.
+  collider_size: 0.18 # (legacy fallback; now overridden by scale * factor via the visual size helper)
   patterns:
     - name: straight
       weight: 4

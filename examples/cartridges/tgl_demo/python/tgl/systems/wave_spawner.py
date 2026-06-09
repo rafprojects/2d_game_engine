@@ -11,13 +11,14 @@ from engine.graphics.components.transform_component import TransformComponent
 from engine.graphics.components.sprite_component import SpriteComponent
 from engine.physics.components.collider_component import ColliderComponent
 from engine.physics.typesg import ColliderType
+from engine.physics.typesg import CollisionLayer, mask_of
 
 from tgl.components.player_component import PlayerComponent
 from tgl.components.enemy_component import EnemyComponent
 
-LAYER_ENEMY = 2
-# Enemy collides with player (layer 1) and bullets (layer 4)
-ENEMY_COLLISION_MASK = (1 << (1 - 1)) | (1 << (4 - 1))  # = 1 | 8 = 9
+LAYER_ENEMY = int(CollisionLayer.ENEMY)
+# Enemy mask using the standard helper (player + player bullets)
+ENEMY_COLLISION_MASK = mask_of(CollisionLayer.PLAYER, CollisionLayer.PLAYER_BULLET)
 
 
 def _asteroid_sprite_path() -> str:
@@ -41,6 +42,8 @@ class WaveSpawnerSystem(System):
         self._x_range = sp["enemy_x_range"]
         self._patterns = cfg["enemies"]["patterns"]
         self._enemy_scale = cfg["enemies"].get("scale", 0.8)
+        # collider_size may be a single float (square) or will have been pre-computed
+        # in entrypoint via the sprite visual size helper + factor.
         self._collider_size = cfg["enemies"].get("collider_size", 0.18)
         self._spawn_timer: float = 0.0
         self._elapsed: float = 0.0
@@ -120,9 +123,18 @@ class WaveSpawnerSystem(System):
             speed=speed,
             pattern=pattern_name
         ))
+
+        # Support either a scalar (legacy square) or [w, h] / (w, h) for a properly proportioned rect.
+        csize = self._collider_size
+        if isinstance(csize, (list, tuple)) and len(csize) >= 2:
+            cvec = Vec2(float(csize[0]), float(csize[1]))
+        else:
+            s = float(csize)
+            cvec = Vec2(s, s)
+
         self.world.add_component(enemy.id, ColliderComponent(
             collider_type=ColliderType.RECTANGLE,
-            size=Vec2(self._collider_size, self._collider_size),
+            size=cvec,
             is_trigger=True,
             collision_layer=LAYER_ENEMY,
             collision_mask=ENEMY_COLLISION_MASK,
