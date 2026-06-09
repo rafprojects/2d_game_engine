@@ -325,20 +325,26 @@ def create_new_cartridge(name: str, target: str | Path | None = None) -> Path:
     if not safe:
         raise ValueError("Invalid cartridge name")
 
-    # Python package names and dotted entrypoint/system paths cannot contain "-".
-    # Use a filesystem/python-safe slug for directories and import paths.
-    # Keep the user-supplied `name` for the human-readable manifest "name".
-    python_slug = safe.replace("-", "_")
+    # For the *filesystem directory* (what the user `cd`s into, what appears in
+    # success messages and docs examples like `cd my-game`), produce a
+    # lowercase kebab-case name. This matches documented usage across README,
+    # DEVELOPER_ONBOARDING, cartridge_pack docstring, etc.
+    # For the Python package (under python/<pkg>/, imports, dotted entrypoint
+    # and systems.register paths in manifest), convert kebab to underscore
+    # (Python identifiers can't contain "-").
+    # Keep the original user `name` for the human-readable manifest "name".
+    kebab_slug = safe.lower().replace("_", "-")
+    python_slug = kebab_slug.replace("-", "_")
     if not python_slug:
         python_slug = "cartridge"
 
     base = Path(target).expanduser().resolve() if target else Path.cwd()
-    cartridge_dir = base / python_slug   # safe dir name (also nice for `cd`)
+    cartridge_dir = base / kebab_slug  # nice kebab dir for `cd my-game` etc.
     if cartridge_dir.exists():
         raise FileExistsError(f"Directory already exists: {cartridge_dir}")
 
     cartridge_dir.mkdir(parents=True)
-    slug = python_slug  # used for package dir + dotted paths in manifest/entrypoint
+    slug = python_slug  # used for python/ package dir + dotted paths in manifest/entrypoint
 
     # 1. config/cartridge.json (include requires for good hygiene, even if P1-F not yet enforced)
     cartridge_json = {

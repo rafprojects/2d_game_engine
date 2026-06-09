@@ -662,6 +662,37 @@ New comments and resolutions:
 
 All changes are small, localized, and improve the quality of the P1-F enforcement and P1-A test without altering success behavior for valid cartridges or existing tests (18/18 cartridge + RM tests remain green; caret cases now correctly enforced in both code paths).
 
+**PR #4 Copilot Review - Sixth Round**
+
+After the fifth round of fixes + push, 2 new unresolved Copilot comments were received.
+
+Per git-address-comments skill:
+- Verified branch still matches via verify_pr_branch (feat/phase1-cartridge-system-polish for PR #4).
+- Fetched unresolved threads (include_outdated=true) — 2 new threads (30 resolved_skipped).
+- Both accepted immediately (real gaps in P1-A asset resolution for the established "assets/..." path convention, and P1-D scaffolding dir naming producing names that contradict the docs/examples we cleaned in prior rounds).
+- Implemented targeted fixes (RM _iter_candidate_paths + docstring; cartridge_pack create_new_cartridge kebab/python slug separation + comments).
+- Updated this PHASE1 block.
+- Re-ran `tests/unit/test_resource_manager.py` + `tests/unit/test_cartridge.py` (21 passed); plus manual smoke: init("My Game") now produces "my-game/" dir + "my_game" python package + manifest dotted names using _, while still emitting the "assets/sprites/..." path in scaffold (which the RM fix now correctly resolves under the mounted assets/ subtree); direct RM resolve verification for the assets/... + mounted-assets-dir case.
+- Will commit/push/resolve the 2 threads (ask before any review re-request).
+
+New comments and resolutions:
+
+**Asset mount precedence for the real path convention (P1-A):**
+
+1. **engine/assets/resource_manager.py:134** (resolve_asset_path and _iter_candidate_paths)
+   - Issue: resolve_asset_path currently only checks the mounted roots by joining `root + relative_path` verbatim. Because most callers (SpriteComponent / RenderSystem) pass paths like `assets/...`, and the mounted roots are themselves typically the `.../assets` directory, resolution will look for `.../assets/assets/...` and fail—meaning cartridge mounts won’t actually take precedence for the common `assets/...` convention.
+   - Fix: Extended `_iter_candidate_paths` (called by resolve, load, validate, etc.) to, when relative_path starts with "assets/" (or "assets\"), also yield the tail (relative_path[7:]) joined under the root. Updated the public resolve_asset_path docstring to document the convention handling and why it exists (preserves "no path changes required in cartridge code" from P1-A ACs). Added handling for the bare "assets" case too.
+   - Rationale: Accepted. Directly solves the reported failure mode for the exact setup used by tgl_demo (the P1-G reference), the `py2d-cartridge init` scaffold (P1-D), and many engine demos that all hard-code "assets/..." (or os.path.join("assets", ...)). Verbatim join alone was insufficient once we started mounting the subtree rather than a parent. The dual-yield keeps backward behavior for other root layouts while making cartridge precedence real. Manual verification + existing tests (which use non-"assets/" relatives against directly-containing dirs) both pass; the strip only adds candidates.
+
+**Scaffold directory naming vs. documented UX (P1-D):**
+
+2. **tools/cli/cartridge_pack.py:341** (create_new_cartridge slug/dir derivation)
+   - Issue: The cartridge scaffold currently derives `safe = slugify(name)` without lowercasing, then uses `python_slug = safe.replace("-", "_")` for the *directory name*. This makes `py2d-cartridge init "My Game"` create something like `My_Game/` (underscores + preserved case), which contradicts the docs/examples (`cd my-game`) and is surprising for a folder slug. Consider separating a lowercase kebab-case dir slug from the underscore package slug.
+   - Fix: After safe=slugify, compute `kebab_slug = safe.lower().replace("_", "-")` for the FS dir (cartridge_dir = base / kebab_slug), and `python_slug = kebab_slug.replace("-", "_")` only for the python/<pkg>/ tree + dotted names in manifest/entrypoint/systems.register. Updated the comments in the function to explain the separation and tie it to the documented examples. (The success print "cd {created}" and the scaffold's internal "assets/..." path are now consistent with the nice dir name.)
+   - Rationale: Accepted. Matches the review's own suggestion. Makes `init "My Game"` (and any cased/spaced name) produce the friendly lowercase kebab dir that all our onboarding/docs/quickstarts have been pointing at since P1-E/G and prior PR address rounds. Python package stays valid (no "-"). Smoke test confirmed: dir="my-game", python package + entrypoint prefix="my_game", manifest correct, and the emitted sprite path remains "assets/..." (now resolvable thanks to the paired RM fix). No test changes needed (no prior assertions on generated dir names for mixed-case inputs; tgl pack test uses the pre-existing "tgl_demo" tree).
+
+All changes are small, defensive, and restore the intended "cartridge assets win for the paths authors actually write" (P1-A) + "init produces what the docs promise" (P1-D) behaviors. Unit tests + targeted manual verification (including roundtrip of the generated cartridge's asset path under its own mount) are green.
+
 ## Context & Progress So Far (Hybrid)
 
 - Substantial prior execution on the tgl_demo cartridge (hitbox derivation bound to visual sprites via helper + scale, player damage blink/tint, --dev-mode + colored collision overlays with proper LineSegs baking, hot-restart via cartridge entrypoint `.reset()`, clean shutdown path, CollisionLayer standardization, config-driven sizes/scales, guarded wiring to support repeated initialize/reset).

@@ -130,6 +130,12 @@ class ResourceManager(System):
         This is the sanctioned hook for other engine systems (e.g. RenderSystem)
         and cartridge helpers so that cartridge-private assets under a mounted
         `assets/` take precedence without authors changing any path strings.
+
+        Handles the established project convention of paths that include an
+        "assets/" prefix (e.g. "assets/sprites/foo.png" used by SpriteComponent,
+        tgl_demo, the init scaffold, and many demos). When a root is itself a
+        cartridge's `assets/` subtree (the common mount), we also try the path
+        with the leading "assets/" segment stripped so the mount actually wins.
         """
         return self._resolve_asset_path(relative_path)
     
@@ -453,6 +459,21 @@ class ResourceManager(System):
     def _iter_candidate_paths(self, relative_path: str):
         for root in self.asset_roots:
             yield os.path.join(root, relative_path)
+            # Support the common convention where code (cartridges, tgl_demo,
+            # scaffold, many demos) uses paths starting with "assets/" (e.g.
+            # "assets/sprites/player.png" or "assets/player.png"), while
+            # cartridge mounts typically point at the `.../assets` subtree
+            # itself (from manifest "assets": {"mount": "assets"} + loader).
+            # Trying the tail directly under the root ensures cartridge
+            # precedence works for the declared strings (P1-A) without
+            # forcing path changes in cartridge code.
+            if relative_path.startswith(("assets/", "assets\\")):
+                tail = relative_path[7:]
+                if tail:
+                    yield os.path.join(root, tail)
+            elif relative_path in ("assets", "assets/", "assets\\"):
+                # Querying the assets dir itself under a mount that *is* that dir
+                yield root
 
     def _resolve_asset_path(self, relative_path: str) -> Optional[str]:
         for candidate in self._iter_candidate_paths(relative_path):
