@@ -1,43 +1,90 @@
 """
-FP-native collision resolver and pluggable quirk rules for the retro layer (P2-B).
+FP-native axis-separated collision resolution with an authentic NES-style
+ejection quirk (P2-B, rebuilt).
 
-This module provides the "intentional" part of the retro reference: deterministic
-fixed-point AABB overlap + a set of documented quirk rules that can produce
-emergent classic behaviors (subpixel wall clips, momentum residuals, etc.)
-that standard float + modern MTV resolution actively prevent.
+This module is the "intentional" part of the retro reference layer. It
+implements the collision model that classic 8-bit platformers actually used -
+move one axis at a time, then push the body out of any solid it overlaps -
+together with the *ejection-direction rule* that made genuine wall clips
+possible on real hardware.
 
-All math uses the P2-A FixedPoint / FixedPointVec2 primitives so results are
-reproducible and explainable within the chosen frac_bits. Rules are pure
-functions (or easily made so) and come with precise docstrings explaining
-*exactly* what they do and why (tied to NES/8-bit hardware characteristics
-such as 8.8 fixed-point / 256 subpixels per pixel, axis-sequential resolve,
-and penetration that only resolves under integer-like rules).
+The two ejection policies
+=========================
 
-Usage (from QuirkMovementSystem or directly in a cartridge):
+Modern (quirk OFF - motion-based ejection):
+    "Push the body back out the face it moved into." If you were moving
+    right and overlap a wall, you are snapped to the wall's left face;
+    moving left, to its right face. You can NEVER end up on the far side of
+    a solid, no matter how fast you move. This mirrors what a correct
+    modern resolver (or the engine's float MTV systems) guarantees.
+
+Retro (quirk ON - "subpixel_wall_clip", mechanism: midline ejection):
+    "Push the body out of whichever half of the obstacle it is in." The
+    resolver does not ask which way you were moving - it asks where your
+    penetrating edge sits relative to the obstacle's midline, exactly like
+    NES tile engines that ejected based on which half of the tile a probe
+    point landed in. The consequence is genuinely emergent:
+
+    * If your per-tick movement exceeds HALF the obstacle's thickness, the
+      first tick that overlaps the obstacle can land your leading edge
+      *past* its midline. The resolver then "helpfully" ejects you out the
+      FAR side: a wall clip.
+    * Whether that happens on a given approach depends on your exact
+      subpixel position modulo the per-tick stride - a one-subpixel change
+      in starting position flips the outcome (see the worked example below).
+    * Obstacles thicker than 2x your speed can never be clipped (the
+      leading edge cannot reach the midline on the contact tick), which is
+      why floors/platforms in the reference cartridge are safe while the
+      thin wall is clippable.
+
+Worked example (8.8 fixed point, the reference cartridge's numbers)
+===================================================================
+Player half-width 6 px (raw 1536), wall spanning x 200..206 px
+(raw min/mid/max = 51200/51968/52736), running right at 4.0 px/tick
+(raw 1024) from center x0 = 153.5 px (raw 39296):
+
+    tick 10: x = 193.5, right edge raw = 51072 <= 51200 -> no overlap yet
+    tick 11: x = 197.5, right edge raw = 52096 >  51200 -> overlap!
+             probe = 52096 > midline 51968 -> ejected out the FAR side
+             -> x = (52736 + 1536) / 256 = 212.0  *** through the wall ***
+
+Same speed from x0 = 150.5 (raw 38528): tick-11 right edge raw = 51328,
+which is <= 51968, so the player is pushed back to x = 194.0 - blocked.
+From raw 39168 (x0 = 153.0) the tick-11 edge lands EXACTLY on the midline
+(51968); the strict `>` comparison fails and the player is blocked - but
+one subpixel later (raw 39169) it clips. That single-subpixel sensitivity
+is the point of the whole layer.
+
+All comparisons are raw-integer compares at one shared frac_bits scale, so
+every outcome is exact and reproducible. Overlap is STRICT (`>` / `<`):
+touching edges do not collide, which keeps bodies resting exactly on
+surfaces stable.
+
+Usage (typically via QuirkMovementSystem; direct use shown for clarity):
+
     from engine.retro.systems.collision import (
-        QuirkRegistry, resolve_quirky, subpixel_wall_clip_rule
+        QuirkRegistry, RetroObstacle, quantize_obstacles, resolve_axis,
     )
 
-    registry = QuirkRegistry()
-    registry.enable("subpixel_wall_clip")
-    new_pos, new_vel, info = resolve_quirky(
-        current_pos, intended_pos, current_vel,
-        obstacles=[{"pos": wall_pos_fp, "size": wall_size_fp, "solid": True}],
-        active_quirks=registry,
-        frac_bits=entity_frac_bits,
-    )
+    spans = quantize_obstacles([RetroObstacle(203, 68, 6, 104, name="wall")], frac_bits=8)
+    res = resolve_axis(pos_x, pos_y, half_w, half_h,
+                       delta=vel_x, axis="x", obstacles=spans,
+                       midline_ejection=True)
+    # res.value is the final X; res.clipped tells you the emergent moment.
 
-See docs/PHASE2_RETRO_EMERGENT_GAMEPLAY_LAYER.md (Track P2-B) and the
-approved plan for full rationale, NES research sources, and test examples.
-
-No side effects. Safe for reference / copy into cartridges.
+Pure Python, no side effects, safe to copy into cartridges.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import dataclass
+from typing import Literal, NamedTuple, Sequence
 
-from ..fixed_point import FixedPoint, FixedPointVec2
+from ..fixed_point import FixedPoint
+
+
+QUIRK_SUBPIXEL_WALL_CLIP = "subpixel_wall_clip"
+KNOWN_QUIRKS = frozenset({QUIRK_SUBPIXEL_WALL_CLIP})
 
 
 class QuirkRegistry:
@@ -51,7 +98,6 @@ class QuirkRegistry:
     Example:
         reg = QuirkRegistry()
         reg.enable("subpixel_wall_clip")
-        reg.disable("momentum_residual")
         if reg.is_active("subpixel_wall_clip"):
             ...
     """
@@ -82,326 +128,224 @@ class QuirkRegistry:
         return f"QuirkRegistry(active={sorted(self._active)})"
 
 
-# =============================================================================
-# FP-native AABB helpers (deterministic within frac_bits)
-# =============================================================================
+@dataclass(frozen=True)
+class RetroObstacle:
+    """A static solid (or decorative) axis-aligned box in retro-space units.
 
-def _fp_rect_min_max(
-    pos: FixedPointVec2, size: FixedPointVec2
-) -> tuple[FixedPoint, FixedPoint, FixedPoint, FixedPoint]:
-    """Return (min_x, min_y, max_x, max_y) for an axis-aligned rect centered at pos."""
-    half = size / FixedPoint(2, frac_bits=pos.frac_bits)
-    return (
-        pos.x - half.x,
-        pos.y - half.y,
-        pos.x + half.x,
-        pos.y + half.y,
-    )
+    cx/cy is the CENTER of the box; w/h its full extents - all in the same
+    units as the Subpixel* components that collide with it (virtual pixels
+    for a VirtualPlayfield cartridge). ``solid=False`` boxes are ignored by
+    the resolver (handy for decorative markers that still want a render
+    entity generated from the same level list).
 
-
-def _rects_overlap_fp(
-    pos_a: FixedPointVec2,
-    size_a: FixedPointVec2,
-    pos_b: FixedPointVec2,
-    size_b: FixedPointVec2,
-) -> bool:
-    """Return True if the two axis-aligned rects overlap (using FP compares)."""
-    min_x_a, min_y_a, max_x_a, max_y_a = _fp_rect_min_max(pos_a, size_a)
-    min_x_b, min_y_b, max_x_b, max_y_b = _fp_rect_min_max(pos_b, size_b)
-
-    # No overlap on any axis => no collision (same-scale exact compare via operators)
-    if max_x_a < min_x_b or max_x_b < min_x_a:
-        return False
-    if max_y_a < min_y_b or max_y_b < min_y_a:
-        return False
-    return True
-
-
-def _compute_penetration_fp(
-    pos_a: FixedPointVec2,
-    size_a: FixedPointVec2,
-    pos_b: FixedPointVec2,
-    size_b: FixedPointVec2,
-) -> tuple[FixedPoint, FixedPoint, str] | None:
+    Level geometry is assumed non-overlapping between solids; the resolver
+    does a single pass per axis.
     """
-    Compute overlap amounts on X and Y (positive = penetration depth).
 
-    Returns (overlap_x, overlap_y, primary_axis) or None if no overlap.
-    primary_axis is 'x' or 'y' (the one with smaller overlap, classic MTV choice).
-    All values are FixedPoint at the caller's scale.
+    cx: float
+    cy: float
+    w: float
+    h: float
+    solid: bool = True
+    name: str = ""
+
+
+class FPSpan(NamedTuple):
+    """A RetroObstacle pre-quantized to raw fixed-point integer spans.
+
+    mid_* is the obstacle midline used by the retro ejection rule
+    (floor of the exact midpoint - deterministic for odd raw extents).
     """
-    if not _rects_overlap_fp(pos_a, size_a, pos_b, size_b):
-        return None
 
-    min_x_a, min_y_a, max_x_a, max_y_a = _fp_rect_min_max(pos_a, size_a)
-    min_x_b, min_y_b, max_x_b, max_y_b = _fp_rect_min_max(pos_b, size_b)
+    min_x: int
+    max_x: int
+    mid_x: int
+    min_y: int
+    max_y: int
+    mid_y: int
+    solid: bool
+    name: str
 
-    overlap_x = min(max_x_a, max_x_b) - max(min_x_a, min_x_b)
-    overlap_y = min(max_y_a, max_y_b) - max(min_y_a, min_y_b)
 
-    # Ensure non-negative (should be by overlap check)
-    overlap_x = max(FixedPoint(0, frac_bits=overlap_x.frac_bits), overlap_x)
-    overlap_y = max(FixedPoint(0, frac_bits=overlap_y.frac_bits), overlap_y)
+def quantize_obstacles(
+    obstacles: Sequence[RetroObstacle], frac_bits: int
+) -> list[FPSpan]:
+    """Quantize obstacle boxes once into raw-int spans at the given precision.
 
-    if overlap_x < overlap_y:
-        axis = "x"
+    Done once (not per tick) so the per-tick resolver works purely on ints.
+    """
+    spans: list[FPSpan] = []
+    two = FixedPoint(2, frac_bits=frac_bits)
+    for obs in obstacles:
+        cx = FixedPoint(obs.cx, frac_bits=frac_bits)
+        cy = FixedPoint(obs.cy, frac_bits=frac_bits)
+        half_w = FixedPoint(obs.w, frac_bits=frac_bits) / two
+        half_h = FixedPoint(obs.h, frac_bits=frac_bits) / two
+        min_x = cx.raw - half_w.raw
+        max_x = cx.raw + half_w.raw
+        min_y = cy.raw - half_h.raw
+        max_y = cy.raw + half_h.raw
+        spans.append(
+            FPSpan(
+                min_x=min_x,
+                max_x=max_x,
+                mid_x=(min_x + max_x) // 2,
+                min_y=min_y,
+                max_y=max_y,
+                mid_y=(min_y + max_y) // 2,
+                solid=obs.solid,
+                name=obs.name,
+            )
+        )
+    return spans
+
+
+@dataclass
+class AxisResolution:
+    """Result of resolving one axis of movement against the level solids.
+
+    value:     final axis coordinate (body center) as FixedPoint.
+    collided:  the body overlapped at least one solid on this axis this tick.
+    eject_dir: -1 pushed toward the obstacle's min side, +1 toward its max
+               side, 0 if no collision.
+    clipped:   midline ejection pushed the body out the side it was MOVING
+               toward - i.e. the emergent wall clip happened.
+    obstacle:  name of the obstacle involved (the clipping one if clipped,
+               else the last one resolved against).
+    """
+
+    value: FixedPoint
+    collided: bool = False
+    eject_dir: int = 0
+    clipped: bool = False
+    obstacle: str = ""
+
+
+def resolve_axis(
+    pos_x: FixedPoint,
+    pos_y: FixedPoint,
+    half_w: FixedPoint,
+    half_h: FixedPoint,
+    delta: FixedPoint,
+    axis: Literal["x", "y"],
+    obstacles: Sequence[FPSpan],
+    midline_ejection: bool,
+) -> AxisResolution:
+    """Integrate `delta` on one axis and resolve overlaps against solids.
+
+    This is the rebuilt core of P2-B. All inputs must share one frac_bits
+    scale (QuirkMovementSystem guarantees this); every comparison below is a
+    raw-integer compare, so results are exact and deterministic.
+
+    Policy selection:
+    - ``midline_ejection=False`` -> modern motion-based ejection: snap back
+      out the face you moved into. Never clips.
+    - ``midline_ejection=True``  -> the "subpixel_wall_clip" quirk: ejection
+      side is chosen by comparing the penetrating probe edge against the
+      obstacle's midline ("which half of the obstacle am I in?"). When the
+      per-tick delta exceeds half the obstacle's thickness AND the subpixel
+      alignment lands the leading edge strictly past the midline on the
+      contact tick, the body is ejected out the FAR side - the emergent
+      clip. See the module docstring for the worked 8.8 example.
+
+    The probe is the player edge that lies strictly inside the obstacle's
+    span (leading edge in the common case); if both or neither edge is
+    inside (body engulfed / spanning), the body center is used.
+
+    A stationary overlap (delta == 0, e.g. a spawn inside a solid) is pushed
+    to the nearest side under BOTH policies - you cannot clip without motion.
+
+    Returns an AxisResolution; callers zero the axis velocity when
+    ``collided`` is True (classic hardware behavior).
+    """
+    fb = pos_x.frac_bits
+
+    if axis == "x":
+        moved = pos_x.raw + delta.raw
+        half_axis = half_w.raw
+        other_min = pos_y.raw - half_h.raw
+        other_max = pos_y.raw + half_h.raw
     else:
-        axis = "y"
-    return overlap_x, overlap_y, axis
+        moved = pos_y.raw + delta.raw
+        half_axis = half_h.raw
+        other_min = pos_x.raw - half_w.raw
+        other_max = pos_x.raw + half_w.raw
 
-
-# =============================================================================
-# Quirk rules (pure, heavily documented, NES-accurate)
-# =============================================================================
-
-def subpixel_wall_clip_rule(
-    current_pos: FixedPointVec2,
-    intended_pos: FixedPointVec2,
-    current_vel: FixedPointVec2,
-    obstacles: list[dict[str, Any]],
-    frac_bits: int,
-    info: dict[str, Any] | None = None,
-) -> tuple[FixedPointVec2, FixedPointVec2, dict[str, Any]]:
-    """
-    Subpixel wall clip / thin-gap passage rule (primary P2-B example).
-
-    Emulates a well-known class of NES platformer behaviors (most famously
-    visible in Super Mario Bros. series wall clips and precise 1-unit gap
-    passage).
-
-    Historical basis (verified via independent research on NES hardware and
-    SMB mechanics):
-    - Positions and velocities used 8.8 fixed-point (or equivalent 256
-      sub-pixel divisions per visible pixel). The low 8 bits were the
-      fractional "subpixel".
-    - Collision probes were often not performed every sub-frame / at full
-      velocity resolution. A fast-moving object could achieve non-zero
-      overlap ("partially inside" a solid) for one or more frames.
-    - Push-out logic was simple (frequently per-axis or based on probe
-      points) and could result in the correction being applied from the
-      "wrong" side or being insufficient when the subpixel depth + velocity
-      aligned a certain way. The net effect: the player could end up on the
-      far side of a 1-pixel (or 1-unit) wall that "should" have blocked it.
-    - Axis order (X then Y or vice versa) and the exact subpixel value at
-      contact time were critical to whether a clip occurred.
-
-    This reference rule:
-    - Performs a full tentative move in the fixed domain (intended_pos).
-    - For each solid obstacle, computes FP overlap.
-    - If overlap exists on the primary axis and the low subpixel bits of the
-      contact edge (extracted from the raw scaled integer) fall inside a
-      "clip window" for the current frac_bits, we intentionally return the
-      *intended_pos* (or a micro-penetrating variant) instead of pushing
-      fully back. This reproduces the emergent passage.
-    - The clip window is deliberately simple and tunable (for frac_bits=8
-      the classic NES grid, certain low-byte ranges allow the "carry through").
-
-    The rule only fires when explicitly enabled via the QuirkRegistry. When
-    disabled (or when using default float systems), the same starting state
-    + velocity produces a clean block / different final position.
-
-    Cartridge authors can copy this function verbatim, tweak the window or
-    axis logic, and get reproducible "NES-style" clips.
-
-    Args are all in the same frac_bits scale (guaranteed by the caller).
-    Returns (corrected_pos, corrected_vel, debug_info).
-    """
-    info = info or {}
-    info.setdefault("rules_applied", [])
-    info.setdefault("clip_events", [])
-
-    fb = frac_bits
-    scale = 1 << fb
-    # Generous clip window for the reference implementation so that a
-    # reproducible "NES-style" subpixel alignment (low 8 bits for frac=8)
-    # reliably triggers the emergent passage in tests and cartridges.
-    # Real cartridges can (and should) tune or replace this window.
-    clip_window_low = 0
-    clip_window_high = scale // 2   # up to 0.5 subpixel "depth" window
-
-    new_pos = intended_pos
-    new_vel = current_vel
+    d = delta.raw
+    collided = False
+    eject_dir = 0
+    clipped = False
+    obstacle_name = ""
 
     for obs in obstacles:
-        if not obs.get("solid", True):
+        if not obs.solid:
             continue
-        obs_pos: FixedPointVec2 = obs["pos"]
-        obs_size: FixedPointVec2 = obs["size"]
+        if axis == "x":
+            o_min, o_max, o_mid = obs.min_x, obs.max_x, obs.mid_x
+            oo_min, oo_max = obs.min_y, obs.max_y
+        else:
+            o_min, o_max, o_mid = obs.min_y, obs.max_y, obs.mid_y
+            oo_min, oo_max = obs.min_x, obs.max_x
 
-        player_size = obs.get("player_size") or FixedPointVec2(0.8, 0.8, frac_bits=fb)
-
-        pen = _compute_penetration_fp(intended_pos, player_size, obs_pos, obs_size)
-        if pen is None:
-            continue
-
-        overlap_x, overlap_y, axis = pen
-
-        if overlap_x <= 0 and overlap_y <= 0:
+        # Strict overlap check on the OTHER axis (touching is not overlap).
+        if not (other_max > oo_min and other_min < oo_max):
             continue
 
-        # Extract low subpixel bits of the contact edge (use the leading edge in vel direction)
-        contact_raw = intended_pos.x.raw if current_vel.x.raw > 0 else intended_pos.x.raw
-        low_bits = contact_raw & (scale - 1)
-
-        if clip_window_low <= low_bits <= clip_window_high:
-            # Classic clip condition met: allow the intended position (micro penetration possible)
-            new_pos = intended_pos
-            info["clip_events"].append({
-                "rule": "subpixel_wall_clip",
-                "axis": axis,
-                "overlap": float(overlap_x if axis == "x" else overlap_y),
-                "low_bits": low_bits,
-                "window": (clip_window_low, clip_window_high),
-                "frac_bits": fb,
-            })
-            info["rules_applied"].append("subpixel_wall_clip")
-            # Small velocity adjustment to simulate "carry" (optional, keeps momentum feel)
-            if current_vel.x.raw != 0:
-                new_vel = FixedPointVec2(
-                    current_vel.x * FixedPoint(0.6, frac_bits=fb),  # damp a little but not zero
-                    current_vel.y,
-                    frac_bits=fb,
-                )
-            break  # first matching clip wins for determinism in this reference
-
-    return new_pos, new_vel, info
-
-
-def momentum_residual_rule(
-    current_pos: FixedPointVec2,
-    intended_pos: FixedPointVec2,
-    current_vel: FixedPointVec2,
-    obstacles: list[dict[str, Any]],
-    frac_bits: int,
-    info: dict[str, Any] | None = None,
-) -> tuple[FixedPointVec2, FixedPointVec2, dict[str, Any]]:
-    """
-    Momentum / "sticky" residual rule (secondary P2-B example).
-
-    On many 8-bit platformers, landing or wall collision did not always zero
-    velocity exactly due to discrete friction application, ground "snap", or
-    subpixel carry. This could produce a tiny residual that affected the next
-    frame (ice physics feel, slight edge stick, or momentum transfer).
-
-    This rule: on a vertical (ground) or horizontal collision, we zero the
-    corresponding velocity component but deliberately leave a 1-subpixel
-    residual in the direction of the previous velocity (or a small bump).
-    The residual is exactly representable at the given frac_bits (e.g. 1/256
-    when frac_bits=8).
-
-    Only active when enabled. Produces different "feel" than the default
-    systems' clean zeroing.
-    """
-    info = info or {}
-    info.setdefault("rules_applied", [])
-    info.setdefault("residual_events", [])
-
-    fb = frac_bits
-    residual = FixedPoint.from_raw(1, frac_bits=fb)  # 1 subpixel unit
-
-    new_pos = intended_pos
-    new_vel = current_vel
-
-    player_size = FixedPointVec2(0.8, 0.8, frac_bits=fb)
-
-    for obs in obstacles:
-        if not obs.get("solid", True):
-            continue
-        obs_pos: FixedPointVec2 = obs["pos"]
-        obs_size: FixedPointVec2 = obs["size"]
-
-        pen = _compute_penetration_fp(intended_pos, player_size, obs_pos, obs_size)
-        if pen is None:
+        lo = moved - half_axis
+        hi = moved + half_axis
+        # Strict overlap on the moving axis.
+        if not (hi > o_min and lo < o_max):
             continue
 
-        overlap_x, overlap_y, axis = pen
-        if (axis == "y" and overlap_y > 0) or (axis == "x" and overlap_x > 0):
-            if axis == "y":
-                # Ground or ceiling hit
-                sign = 1 if current_vel.y.raw > 0 else -1
-                new_vel = FixedPointVec2(new_vel.x, residual * FixedPoint(sign, frac_bits=fb), frac_bits=fb)
+        collided = True
+
+        if d == 0:
+            # Stationary overlap safety: nearest-side push, never a clip.
+            if moved <= o_mid:
+                moved = o_min - half_axis
+                this_eject = -1
             else:
-                sign = 1 if current_vel.x.raw > 0 else -1
-                new_vel = FixedPointVec2(residual * FixedPoint(sign, frac_bits=fb), new_vel.y, frac_bits=fb)
+                moved = o_max + half_axis
+                this_eject = +1
+        elif midline_ejection:
+            # THE QUIRK. Which half of the obstacle is the probe in?
+            hi_inside = o_min < hi < o_max
+            lo_inside = o_min < lo < o_max
+            if hi_inside and not lo_inside:
+                probe = hi
+            elif lo_inside and not hi_inside:
+                probe = lo
+            else:
+                probe = moved
+            if probe > o_mid:  # STRICT: landing exactly on the midline blocks
+                moved = o_max + half_axis
+                this_eject = +1
+            else:
+                moved = o_min - half_axis
+                this_eject = -1
+            if (d > 0 and this_eject > 0) or (d < 0 and this_eject < 0):
+                # Ejected out the side we were moving toward: the clip.
+                clipped = True
+                obstacle_name = obs.name
+        else:
+            # Modern: snap back out the face we moved into.
+            if d > 0:
+                moved = o_min - half_axis
+                this_eject = -1
+            else:
+                moved = o_max + half_axis
+                this_eject = +1
 
-            info["residual_events"].append({
-                "rule": "momentum_residual",
-                "axis": axis,
-                "residual": float(residual),
-            })
-            info["rules_applied"].append("momentum_residual")
-            break
+        eject_dir = this_eject
+        if not clipped:
+            obstacle_name = obs.name
+        # Single pass continues with the corrected position (level solids
+        # are assumed non-overlapping, so later obstacles see a clean state).
 
-    return new_pos, new_vel, info
-
-
-# =============================================================================
-# Main resolver
-# =============================================================================
-
-def resolve_quirky(
-    current_pos: FixedPointVec2,
-    intended_pos: FixedPointVec2,
-    current_vel: FixedPointVec2,
-    obstacles: list[dict[str, Any]],
-    active_quirks: QuirkRegistry | list[str] | set[str],
-    frac_bits: int,
-) -> tuple[FixedPointVec2, FixedPointVec2, dict[str, Any]]:
-    """
-    Resolve a tentative move against obstacles, applying any enabled quirk rules.
-
-    This is the core of the P2-B reference collision behavior. It is called by
-    QuirkMovementSystem after a full FP velocity integration step.
-
-    active_quirks may be a QuirkRegistry (preferred) or an iterable of names.
-
-    Returns (final_pos, final_vel, debug_info).
-    The info dict always contains at least "rules_applied".
-    """
-    if isinstance(active_quirks, QuirkRegistry):
-        active_names = active_quirks.active
-    else:
-        active_names = set(active_quirks)
-
-    info: dict[str, Any] = {"rules_applied": [], "active_quirks": list(active_names)}
-
-    pos = intended_pos
-    vel = current_vel
-
-    # Apply rules in a deterministic order
-    rule_order = ["subpixel_wall_clip", "momentum_residual"]
-    for name in rule_order:
-        if name not in active_names:
-            continue
-        if name == "subpixel_wall_clip":
-            pos, vel, rule_info = subpixel_wall_clip_rule(
-                current_pos, pos, vel, obstacles, frac_bits, info
-            )
-        elif name == "momentum_residual":
-            pos, vel, rule_info = momentum_residual_rule(
-                current_pos, pos, vel, obstacles, frac_bits, info
-            )
-        info.update(rule_info)
-
-    # Only apply the safe modern fallback clamp if no special quirk rule
-    # (e.g. subpixel_wall_clip) took responsibility for this collision.
-    # This ensures that when the clip rule fires we keep the emergent pos.
-    special_handled = bool(info.get("clip_events")) or "subpixel_wall_clip" in info.get("rules_applied", [])
-    if not special_handled:
-        player_size = FixedPointVec2(0.8, 0.8, frac_bits=frac_bits)
-        for obs in obstacles:
-            if not obs.get("solid", True):
-                continue
-            obs_pos = obs["pos"]
-            obs_size = obs["size"]
-            if _rects_overlap_fp(pos, player_size, obs_pos, obs_size):
-                wall_left = obs_pos.x - (obs_size.x / FixedPoint(2, frac_bits=frac_bits))
-                player_half = player_size.x / FixedPoint(2, frac_bits=frac_bits)
-                clamped_x = wall_left - player_half
-                if pos.x > clamped_x:
-                    pos = FixedPointVec2(clamped_x, pos.y, frac_bits=frac_bits)
-                info.setdefault("fallback_pushes", []).append({"axis": "x", "clamped_to": float(clamped_x)})
-
-    info["final_pos"] = (float(pos.x), float(pos.y))
-    info["final_vel"] = (float(vel.x), float(vel.y))
-    return pos, vel, info
+    return AxisResolution(
+        value=FixedPoint.from_raw(moved, frac_bits=fb),
+        collided=collided,
+        eject_dir=eject_dir,
+        clipped=clipped,
+        obstacle=obstacle_name,
+    )

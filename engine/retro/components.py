@@ -8,11 +8,19 @@ sub-pixel position/velocity for emergent collision and movement quirks).
 SubpixelMovementComponent (P2-B) is a minimal velocity holder using
 FixedPointVec2 for current/target velocity. It lets QuirkMovementSystem (and
 cartridge authors) keep all integration and quirk rule math in the fixed-point
-domain.
+domain. Under the fixed-tick QuirkMovementSystem, velocities are expressed in
+**pixels (or units) per tick**, like real 8-bit hardware - not per second.
+It also carries the resolver-owned contact flags (on_ground / hit_ceiling /
+hit_wall) that the system updates every tick.
 
-Both are deliberately *parallel* types to the float equivalents
-(TransformComponent, MovementComponent). Cartridges opt into them (or copy
-their rules) rather than the engine forcing retro constraints on everyone.
+SubpixelColliderComponent (P2-B re-work) gives an entity its own collision
+extents in the retro layer (per-entity size; nothing is hardcoded). Entities
+without it still integrate velocity but skip collision resolution.
+
+All are deliberately *parallel* types to the float equivalents
+(TransformComponent, MovementComponent, ColliderComponent). Cartridges opt
+into them (or copy their rules) rather than the engine forcing retro
+constraints on everyone.
 
 See docs/PHASE2_RETRO_EMERGENT_GAMEPLAY_LAYER.md (tracks P2-A and P2-B) and
 the individual classes for usage examples with QuirkMovementSystem.
@@ -135,6 +143,17 @@ class SubpixelMovementComponent(Component):
     position deltas, and quirk rules all execute with deterministic
     quantization in the reference retro layer.
 
+    Velocity semantics under the fixed-tick QuirkMovementSystem: values are
+    **per tick** (e.g. pixels/tick at 60 ticks per second), exactly like
+    classic hardware. The system never multiplies by a float dt.
+
+    Contact flags (owned by the resolver, read by cartridge controllers):
+    - on_ground: entity was pushed up out of a solid while moving down this tick.
+    - hit_ceiling: pushed down out of a solid while moving up.
+    - hit_wall: collided on the X axis this tick.
+    These replace ad-hoc float "grounded checks" in cartridges - the resolver's
+    geometry is the single source of truth.
+
     Acceleration/deceleration and base speed remain float for cartridge
     ergonomics (they are quantized to the component's frac_bits by the system
     when producing FP deltas). This keeps the component small while ensuring
@@ -180,6 +199,11 @@ class SubpixelMovementComponent(Component):
         self.can_move: bool = True
         self.is_moving: bool = False
 
+        # Contact flags - written by QuirkMovementSystem each tick.
+        self.on_ground: bool = False
+        self.hit_ceiling: bool = False
+        self.hit_wall: bool = False
+
     @property
     def frac_bits(self) -> int:
         return self._frac_bits
@@ -211,4 +235,56 @@ class SubpixelMovementComponent(Component):
         return (
             f"SubpixelMovementComponent(vel=({vx:.6f}, {vy:.6f}), "
             f"base_speed={self.base_speed}, frac_bits={self._frac_bits})"
+        )
+
+
+class SubpixelColliderComponent(Component):
+    """
+    Per-entity collision extents for the retro layer (axis-aligned box).
+
+    Width/height are in the same units as the entity's SubpixelTransform
+    position (virtual pixels for a VirtualPlayfield cartridge). They are
+    quantized to frac_bits on construction and stored as half-extents, which
+    is what the axis resolver actually consumes.
+
+    Entities with SubpixelTransform + SubpixelMovement but WITHOUT this
+    component integrate velocity normally but skip collision resolution
+    entirely (useful for particles/decorations).
+
+    Example (12x16 px player on an 8.8 grid):
+        SubpixelColliderComponent(12, 16, frac_bits=8)
+    """
+
+    def __init__(
+        self,
+        width: float | int | FixedPoint,
+        height: float | int | FixedPoint,
+        *,
+        frac_bits: int = 16,
+    ) -> None:
+        w = FixedPoint(width, frac_bits=frac_bits)
+        h = FixedPoint(height, frac_bits=frac_bits)
+        if w.raw <= 0 or h.raw <= 0:
+            raise ValueError("SubpixelColliderComponent width/height must be positive")
+        self._frac_bits: int = frac_bits
+        two = FixedPoint(2, frac_bits=frac_bits)
+        self.half_w: FixedPoint = w / two
+        self.half_h: FixedPoint = h / two
+
+    @property
+    def frac_bits(self) -> int:
+        return self._frac_bits
+
+    @property
+    def width(self) -> float:
+        return float(self.half_w) * 2.0
+
+    @property
+    def height(self) -> float:
+        return float(self.half_h) * 2.0
+
+    def __repr__(self) -> str:
+        return (
+            f"SubpixelColliderComponent({self.width}x{self.height}, "
+            f"frac_bits={self._frac_bits})"
         )

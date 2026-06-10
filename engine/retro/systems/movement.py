@@ -1,103 +1,152 @@
 """
-QuirkMovementSystem - Reference retro movement system with intentional quirk rules (P2-B).
+QuirkMovementSystem - fixed-tick retro movement + collision system (P2-B, rebuilt).
 
-This is the main deliverable for Track P2-B. It is a drop-in style System that
-operates *only* on entities carrying the P2-A retro precision components
-(SubpixelTransformComponent + SubpixelMovementComponent).
+This is the reference implementation of NES-style platformer simulation for
+the retro layer. It owns:
 
-It performs:
-- Velocity integration using FixedPoint arithmetic (with explicit quantization
-  points documented in comments).
-- Collision response via the FP resolver in collision.py.
-- Application of any enabled quirk rules (via QuirkRegistry), which can
-  intentionally produce classic emergent behaviors.
+- A **fixed simulation tick** (default 60 Hz from RetroProfile.tick_hz). The
+  system accumulates the engine's float frame dt and steps the simulation in
+  whole ticks; positions and velocities are only ever touched inside a tick,
+  and velocities are **units per tick** (pixels/tick for a VirtualPlayfield
+  cartridge). The float dt is never converted into the fixed-point domain,
+  which keeps the simulation deterministic - the same inputs always produce
+  the same subpixel positions regardless of frame rate. (This matches how the
+  original hardware worked and the project's deterministic keystone.)
 
-The system never touches float Transforms, Vec2 velocities, the default
-MovementSystem, or the default CollisionSystem. Modern code paths remain
-completely unaffected.
+- **Axis-separated integrate-and-resolve** per entity per tick: move X,
+  resolve X against the level solids, then move Y, resolve Y (the classic
+  axis-sequential order). Resolution snaps the body to the obstacle face and
+  zeroes that axis's velocity. Standing on floors, hitting walls, and bonking
+  ceilings all fall out of this naturally.
 
-A cartridge "registers the retro movement + collision components" by:
-    world.add_component(e.id, SubpixelTransformComponent(...))
-    world.add_component(e.id, SubpixelMovementComponent(...))
-    # (existing ColliderComponent on walls work via FP snapshot)
-    sys = QuirkMovementSystem(world)
-    sys.enable_quirk("subpixel_wall_clip")
-    world.add_system(sys)
+- **The quirk**: when "subpixel_wall_clip" is enabled (via the profile or
+  enable_quirk), axis resolution uses *midline ejection* instead of
+  motion-based ejection - see collision.resolve_axis for the rule and the
+  worked example. Clips are recorded in ``clip_events`` so cartridges can
+  surface the emergent moment to the player.
 
-See docs/PHASE2_RETRO_EMERGENT_GAMEPLAY_LAYER.md and the approved plan
-for the full design rationale, NES research basis, and deterministic test
-examples that prove a quirk only occurs when the retro path + rule is active.
+- **Contact flags** on SubpixelMovementComponent (on_ground / hit_ceiling /
+  hit_wall), updated every tick. Cartridge controllers should read these
+  instead of doing their own float geometry checks. Note: on_ground means
+  "pushed up out of a solid while moving down this tick" - keep applying
+  gravity every tick (as real games did) so the flag stays fresh.
 
-Pure Python, no external dependencies beyond the engine's own retro primitives
-and core World.
+Opt-in (P2-C):
+    from engine.retro import (
+        RetroProfile, RetroObstacle, register_retro_systems,
+        SubpixelTransformComponent, SubpixelMovementComponent,
+        SubpixelColliderComponent,
+    )
+    profile = RetroProfile("nes", frac_bits=8, tick_hz=60,
+                           enable_quirks=["subpixel_wall_clip"])
+    retro_sys = register_retro_systems(world, profile=profile, obstacles=LEVEL)
+    # add Subpixel* components to gameplay entities; retro_sys is the handle
+    # for enable_quirk/disable_quirk/add_tick_callback.
+
+Cartridge game-feel code (acceleration, gravity, jumping) belongs in a
+cartridge-side controller registered with ``add_tick_callback`` so it runs
+once per simulation tick, not per render frame.
+
+Entities with SubpixelTransform + SubpixelMovement but no SubpixelCollider
+integrate velocity without collision. Entities whose components use a
+different frac_bits than the profile are skipped (warned once) so that all
+raw-integer comparisons stay exact at a single scale.
+
+The system never touches float Transforms, the default MovementSystem, or the
+default CollisionSystem. Modern code paths remain completely unaffected.
+
+Pure Python, no external dependencies beyond the engine's own retro
+primitives and core World.
 """
 
 from __future__ import annotations
 
-from engine.core.system import System
-from engine.graphics.components.transform_component import TransformComponent
-from engine.physics.components.collider_component import ColliderComponent
+from typing import Any, Callable, Sequence
 
-from ..components import SubpixelTransformComponent, SubpixelMovementComponent
-from .collision import QuirkRegistry, resolve_quirky
+from engine.core.system import System
+
+from ..components import (
+    SubpixelColliderComponent,
+    SubpixelMovementComponent,
+    SubpixelTransformComponent,
+)
 from ..fixed_point import FixedPoint, FixedPointVec2
-from ..profile import RetroProfile  # P2-C lightweight fidelity profile for opt-in
+from ..profile import RetroProfile
+from .collision import (
+    FPSpan,
+    QUIRK_SUBPIXEL_WALL_CLIP,
+    QuirkRegistry,
+    RetroObstacle,
+    quantize_obstacles,
+    resolve_axis,
+)
 
 
 class QuirkMovementSystem(System):
-    """
-    Reference implementation of NES-style / quirk movement (P2-B + P2-C opt-in).
+    """Fixed-tick retro movement/collision with opt-in quirk rules.
 
-    Applies velocity in the fixed-point domain, performs a full tentative step,
-    then resolves against obstacles (snapped from any ColliderComponents in the
-    world, plus any extra obstacles supplied at construction) using pluggable
-    documented quirk rules.
-
-    Quantization is applied at well-defined points so that the "why this quirk
-    happens" is always reproducible and explainable.
-
-    P2-C opt-in:
-    - Per-entity: Add Subpixel* components (SubpixelTransformComponent and/or
-      SubpixelMovementComponent) to entities that should use retro precision
-      and quirks. These act as the "flag" / enhanced transform (per PHASE2
-      suggestion of "flag on an enhanced transform" or RetroPrecisionComponent).
-    - At cartridge initialize time: Create a RetroProfile (simple fidelity
-      profile concept) and pass it when registering the system via
-      world.add_system(...). Or use the convenience register_retro_systems().
-    - The system only ever queries entities that have the Subpixel* components,
-      ensuring clean coexistence with default float systems.
-
-    Usage (with profile for P2-C):
-        from engine.retro import RetroProfile, QuirkMovementSystem
-        profile = RetroProfile("nes", frac_bits=8, enable_quirks=["subpixel_wall_clip"])
-        sys = QuirkMovementSystem(world, profile=profile)
-
-        # or the one-liner helper (recommended for P2-D style cartridges):
-        from engine.retro import register_retro_systems, RetroProfile
-        profile = RetroProfile("nes", frac_bits=8, enable_quirks=["subpixel_wall_clip"])
-        register_retro_systems(context.world, profile=profile)
-
-    Legacy (still supported):
-        sys = QuirkMovementSystem(world)
-        sys.enable_quirk("subpixel_wall_clip")
+    Args:
+        world: the ECS World.
+        profile: RetroProfile (frac_bits = simulation precision, tick_hz =
+            simulation rate, enable_quirks auto-enabled). Defaults to the
+            "modern" profile (frac_bits=16, 60 Hz, no quirks).
+        obstacles: static level geometry as RetroObstacle boxes (quantized
+            once at the profile's frac_bits). Can be replaced later with
+            set_obstacles().
+        quirk_registry: optionally share/inject a registry; by default the
+            system owns one.
+        max_ticks_per_frame: spiral-of-death guard - at most this many
+            simulation ticks run per update() call; excess backlog is dropped.
     """
 
     def __init__(
         self,
-        world,
-        extra_obstacles: list[dict] | None = None,
+        world: Any,
+        profile: RetroProfile | None = None,
+        obstacles: Sequence[RetroObstacle] | None = None,
         quirk_registry: QuirkRegistry | None = None,
-        profile: "RetroProfile" | None = None,
+        max_ticks_per_frame: int = 5,
     ) -> None:
         super().__init__(world)
-        self._extra_obstacles: list[dict] = extra_obstacles or []
-        self.quirk_registry: QuirkRegistry = quirk_registry or QuirkRegistry()
         self.profile: RetroProfile = profile or RetroProfile(name="modern")
+        self.quirk_registry: QuirkRegistry = quirk_registry or QuirkRegistry()
+        for name in self.profile.enable_quirks:
+            self.enable_quirk(name)
 
-        # Auto-enable quirks from the profile (P2-C opt-in at init time)
-        if self.profile.enable_quirks:
-            for name in self.profile.enable_quirks:
-                self.enable_quirk(name)
+        self._frac_bits: int = self.profile.frac_bits
+        self.obstacles: list[RetroObstacle] = []
+        self._spans: list[FPSpan] = []
+        if obstacles:
+            self.set_obstacles(obstacles)
+
+        self._tick_dt: float = 1.0 / float(self.profile.tick_hz)
+        self._max_ticks_per_frame: int = max(1, int(max_ticks_per_frame))
+        self._accum: float = 0.0
+        self._tick_count: int = 0
+        self._tick_callbacks: list[Callable[[int], None]] = []
+        self._warned_mismatch: set[Any] = set()
+
+        # Emergent-clip log: cleared at the start of every update() call, so
+        # systems running after this one in the same frame see this frame's
+        # events. (step_ticks does not clear - tests read accumulated events.)
+        self.clip_events: list[dict[str, Any]] = []
+
+    # ------------------------------------------------------------------
+    # Configuration surface
+    # ------------------------------------------------------------------
+    def set_obstacles(self, obstacles: Sequence[RetroObstacle]) -> None:
+        """Replace the static level geometry (quantized once, not per tick)."""
+        self.obstacles = list(obstacles)
+        self._spans = quantize_obstacles(self.obstacles, self._frac_bits)
+
+    def add_tick_callback(self, fn: Callable[[int], None]) -> None:
+        """Register a per-tick callback fn(tick_index), run before integration.
+
+        This is where cartridge controllers apply game feel (input ->
+        acceleration, gravity, jumps) so their math runs exactly once per
+        simulation tick.
+        """
+        self._tick_callbacks.append(fn)
 
     def enable_quirk(self, name: str) -> None:
         """Enable a named quirk for this system instance."""
@@ -107,12 +156,51 @@ class QuirkMovementSystem(System):
         """Disable a named quirk for this system instance."""
         self.quirk_registry.disable(name)
 
+    @property
+    def tick_count(self) -> int:
+        """Total simulation ticks run since construction."""
+        return self._tick_count
+
+    @property
+    def tick_dt(self) -> float:
+        """Duration of one simulation tick in seconds (1 / tick_hz)."""
+        return self._tick_dt
+
+    # ------------------------------------------------------------------
+    # Frame entry point (fixed-tick accumulator)
+    # ------------------------------------------------------------------
     def update(self, dt: float) -> None:
-        """Advance all entities using Subpixel* components with quirk-aware rules."""
+        """Accumulate frame time and run whole simulation ticks."""
+        self.clip_events.clear()
+        self._accum += dt
+        ticks_run = 0
+        while self._accum >= self._tick_dt and ticks_run < self._max_ticks_per_frame:
+            self._run_tick()
+            self._accum -= self._tick_dt
+            ticks_run += 1
+        if self._accum > self._tick_dt:
+            # Too far behind: drop the backlog rather than spiral.
+            self._accum = self._tick_dt
+
+    def step_ticks(self, n: int) -> None:
+        """Run n simulation ticks immediately (deterministic test/tool hook)."""
+        for _ in range(n):
+            self._run_tick()
+
+    # ------------------------------------------------------------------
+    # One simulation tick
+    # ------------------------------------------------------------------
+    def _run_tick(self) -> None:
+        tick = self._tick_count
+        for fn in list(self._tick_callbacks):
+            fn(tick)
+
+        midline = self.quirk_registry.is_active(QUIRK_SUBPIXEL_WALL_CLIP)
+        fb = self._frac_bits
+
         entities = self.world.get_entities_with_components(
             SubpixelTransformComponent, SubpixelMovementComponent
         )
-
         for entity in entities:
             st: SubpixelTransformComponent | None = self.world.get_component(
                 entity.id, SubpixelTransformComponent
@@ -120,91 +208,62 @@ class QuirkMovementSystem(System):
             sm: SubpixelMovementComponent | None = self.world.get_component(
                 entity.id, SubpixelMovementComponent
             )
-
             if not st or not sm or not sm.can_move:
                 continue
 
-            fb = st.frac_bits
-
-            # ------------------------------------------------------------------
-            # Velocity integration (reference implementation)
-            # ------------------------------------------------------------------
-            # In a fuller cartridge you would also handle input -> target_velocity,
-            # acceleration toward target, etc. Here we keep the reference minimal
-            # and focused on the precision + quirk story: we take whatever
-            # current_velocity is set on the component (tests and cartridges can
-            # set it directly or implement their own higher-level controller that
-            # writes FP velocities).
+            if st.frac_bits != fb or sm.frac_bits != fb:
+                if entity.id not in self._warned_mismatch:
+                    print(
+                        f"[retro] skipping entity {entity.id}: component frac_bits "
+                        f"({st.frac_bits}/{sm.frac_bits}) != profile frac_bits ({fb})"
+                    )
+                    self._warned_mismatch.add(entity.id)
+                continue
 
             vel: FixedPointVec2 = sm.current_velocity
-
-            # Quantization point 1: convert dt to FixedPoint at *this entity's* precision.
-            # This emulates a per-frame fixed-point time step.
-            dt_fp = FixedPoint.from_float(dt, frac_bits=fb)
-
-            # Quantization point 2: multiply velocity by dt (the FixedPointVec2 *
-            # operator performs the scale-aware multiplication + rounding back
-            # to the vector's frac_bits).
-            delta: FixedPointVec2 = vel * dt_fp
-
-            current_pos: FixedPointVec2 = st.position
-            intended_pos: FixedPointVec2 = current_pos + delta
-
-            # ------------------------------------------------------------------
-            # Build obstacle list (FP snapshot)
-            # ------------------------------------------------------------------
-            obstacles: list[dict] = list(self._extra_obstacles)
-
-            # Snapshot any entities that have a (float) Transform + Collider.
-            # We convert their data to the mover's frac_bits so all math stays FP.
-            collider_entities = self.world.get_entities_with_components(
-                TransformComponent, ColliderComponent
-            )
-            for other in collider_entities:
-                if other.id == entity.id:
-                    continue
-                t = self.world.get_component(other.id, TransformComponent)
-                c = self.world.get_component(other.id, ColliderComponent)
-                if not t or not c:
-                    continue
-
-                obs_pos = FixedPointVec2(float(t.x), float(t.y), frac_bits=fb)
-
-                # Approximate size from collider (rect or circle->square for this reference)
-                if getattr(c, "collider_type", None) is not None and "RECT" in str(c.collider_type).upper():
-                    sx = float(getattr(c.size, "x", c.size[0]) if hasattr(c.size, "x") else c.size[0])
-                    sy = float(getattr(c.size, "y", c.size[1]) if hasattr(c.size, "y") else c.size[1])
-                else:
-                    r = float(getattr(c, "radius", 0.5)) * 2.0
-                    sx = sy = r
-
-                obs_size = FixedPointVec2(sx, sy, frac_bits=fb)
-
-                obstacles.append({
-                    "pos": obs_pos,
-                    "size": obs_size,
-                    "solid": not getattr(c, "is_trigger", False),
-                    "player_size": FixedPointVec2(0.8, 0.8, frac_bits=fb),
-                })
-
-            # ------------------------------------------------------------------
-            # Resolve using the quirk-aware FP resolver
-            # ------------------------------------------------------------------
-            final_pos, final_vel, _info = resolve_quirky(
-                current_pos,
-                intended_pos,
-                vel,
-                obstacles,
-                self.quirk_registry,
-                fb,
+            pos: FixedPointVec2 = st.position
+            col: SubpixelColliderComponent | None = self.world.get_component(
+                entity.id, SubpixelColliderComponent
             )
 
-            # Write the (possibly quirk-modified) results back
-            st.position = final_pos
-            sm.current_velocity = final_vel
+            if col is None:
+                # No collider: pure integration (velocity is per tick).
+                st.position = pos + vel
+                sm.is_moving = vel.x.raw != 0 or vel.y.raw != 0
+                continue
 
-            # Very light "is_moving" maintenance for ergonomics
-            if sm.current_velocity.length() > 0.001:
-                sm.is_moving = True
-            else:
-                sm.is_moving = False
+            # Axis-separated integrate + resolve: X first, then Y (with the
+            # already-resolved X), the classic axis-sequential order.
+            res_x = resolve_axis(
+                pos.x, pos.y, col.half_w, col.half_h, vel.x, "x", self._spans, midline
+            )
+            res_y = resolve_axis(
+                res_x.value, pos.y, col.half_w, col.half_h, vel.y, "y", self._spans, midline
+            )
+
+            st.position = FixedPointVec2(res_x.value, res_y.value, frac_bits=fb)
+
+            zero = FixedPoint(0, frac_bits=fb)
+            new_vx = zero if res_x.collided else vel.x
+            new_vy = zero if res_y.collided else vel.y
+            sm.current_velocity = FixedPointVec2(new_vx, new_vy, frac_bits=fb)
+            sm.is_moving = new_vx.raw != 0 or new_vy.raw != 0
+
+            # Contact flags (resolver-owned truth for cartridge controllers).
+            sm.hit_wall = res_x.collided
+            sm.on_ground = res_y.collided and res_y.eject_dir > 0 and vel.y.raw < 0
+            sm.hit_ceiling = res_y.collided and res_y.eject_dir < 0 and vel.y.raw > 0
+
+            if res_x.clipped or res_y.clipped:
+                self.clip_events.append(
+                    {
+                        "entity_id": entity.id,
+                        "tick": tick,
+                        "axis": "x" if res_x.clipped else "y",
+                        "obstacle": res_x.obstacle if res_x.clipped else res_y.obstacle,
+                        "pos": st.position.get_xy_float(),
+                        "quirk": QUIRK_SUBPIXEL_WALL_CLIP,
+                    }
+                )
+
+        self._tick_count += 1
