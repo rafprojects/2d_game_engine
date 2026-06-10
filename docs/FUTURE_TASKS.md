@@ -116,6 +116,36 @@ See the approved P2-A session plan for the full pros/cons/LOE analysis of
 native paths (C++ Panda expansion was scrapped; Rust via added layer is the
 only path worth future investigation).
 
+### E. System-ownership contract / World.add_system dedup
+Surfaced during the P2 retro audit (2026-06). `World.add_system` blindly
+appends (engine/core/system.py:105): there is no dedup, ordering, priority,
+or namespacing, and no documented contract for which core systems the host
+(main.py) provides vs which a cartridge must register. main.py pre-registers
+ResourceManager/AssetStreaming/Render/Input/Movement before the cartridge
+loads; the retro_sidescroller_demo relies on them (correct), while tgl_demo
+registers its *own* RenderSystem + InputSystem on top (see task F). Design a
+small contract: e.g. `world.ensure_system(cls, factory)` (idempotent by
+type), or a "host provides" list on CartridgeContext that cartridges can
+query, plus removal support for cartridge-registered systems on unload.
+
+### F. tgl_demo double Render/Input registration
+tgl_demo's initialize creates and registers its own RenderSystem and
+InputSystem (examples/cartridges/tgl_demo/python/tgl/entrypoint.py:143-144,
+321, 328) even though main.py already registered both (main.py:98-105). Two
+RenderSystems and two InputSystems run every frame; it works because they
+share component state (sprite.panda_node), but it is wasteful and fragile.
+Fix after task E lands (the demo should consume the host's systems like
+retro_sidescroller_demo does, or ensure_system should make the double
+registration a no-op).
+
+### G. `typesg` / `typeg` package naming cleanup
+Several subsystems keep their enums/typing in oddly named packages
+(`engine/physics/typesg/`, and similar `typesg`/`typeg` directories in other
+subsystems). Rename to something self-explanatory (e.g. `defs/`,
+`collider_types.py` at module level) in one sweep, with deprecation aliases
+for cartridge compatibility. Low value alone - batch with the next
+engine-wide refactor.
+
 ---
 
 

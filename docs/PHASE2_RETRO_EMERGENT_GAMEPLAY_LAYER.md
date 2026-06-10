@@ -1,8 +1,8 @@
 # Phase 2 - Retro Emergent Gameplay Layer
 
-**Status:** Planned  
+**Status:** In Progress  
 **Created:** 2026-06  
-**Last updated:** 2026-06 (initial draft from vision extraction + user choices)
+**Last updated:** 2026-06-10 (P2-B and P2-D confirmed complete by user after interactive verification)
 
 ### Tracks
 
@@ -11,7 +11,7 @@
 | P2-A | Core retro math primitives (`engine/retro/` package: fixed-point arithmetic, `FixedPointVec2`, `SubpixelTransformComponent` or equivalent precision-aware components) | Complete ✅ | Medium |
 | P2-B | Reference quirk movement and collision systems (e.g. `NESStyleMovementSystem` or `QuirkMovementSystem` + collision resolver that intentionally applies and documents specific clipping/penetration/quirk rules) | Complete ✅ | Large |
 | P2-C | Opt-in / integration mechanism for the retro layer (fidelity profile hook, component/system flags, clean coexistence with default float/Vec2 paths so modern cartridges are unaffected) | Complete ✅ | Small-Medium |
-| P2-D | One or two small reference cartridges demonstrating a reproducible emergent mechanic (e.g. subpixel-enabled wall clip, momentum quirk, or documented classic glitch that only appears when the layer is active) | In Progress (re-work from feedback) | Medium |
+| P2-D | One or two small reference cartridges demonstrating a reproducible emergent mechanic (e.g. subpixel-enabled wall clip, momentum quirk, or documented classic glitch that only appears when the layer is active) | Complete ✅ | Medium |
 | P2-E | Documentation and tutorial ("Building Authentic Retro Mechanics with Cartridges" or equivalent; includes how cartridge authors opt in and why the emergent behavior occurs) | Planned | Small |
 
 ---
@@ -172,6 +172,26 @@ Start with 1–3 high-value, well-known examples (subpixel wall clipping, a mome
   - All new code has type hints, is pure-Python, import-side-effect free, and the public surface (`from engine.retro import QuirkMovementSystem, SubpixelMovementComponent`) works cleanly.
 
 Next tracks (P2-C onward) can now safely depend on the P2-B reference systems + documented quirk rules. The retro layer (math + systems) is complete for the phase's "reference + reproducible emergent mechanic" thesis.
+
+**Re-work notes (2026-06, full audit — track re-opened and rebuilt):**
+
+An audit of the delivered P2-B implementation found that it did **not** meet the track's own acceptance criteria, despite the verification claims above:
+
+- The "subpixel_wall_clip" rule was a **hardcoded probability gate, not emergent behavior**: it checked the low bits of the X position against a window `[0, scale//2]` — *half of all possible subpixel values* — and on a match simply returned the penetrating position, through **any** solid on **any** axis, including the floor. Line 243 contained a dead conditional (both branches identical), evidence the leading-edge logic was never finished.
+- `resolve_quirky` had **no Y-axis resolution at all**; its only fallback clamped X to the obstacle's *left* edge. A platformer was mathematically impossible on it: a body overlapping the ground was either let through (the gate) or teleported to the left of the ground rect.
+- The player's collision size was hardcoded `0.8×0.8` in four places; `RetroProfile.frac_bits` was decorative; and the variable float frame `dt` was quantized into the FP domain every frame, breaking determinism (conflicts with the project's deterministic keystone).
+- The single unit test (one wall, pure horizontal motion, no gravity) was the only scenario that worked — and the rule's window was sized to guarantee it.
+
+**The rebuild (this re-work) replaces the mechanism with the authentic one:**
+
+- **Fixed simulation tick** (`RetroProfile.tick_hz`, default 60): the system accumulates float frame dt and steps in whole ticks; velocities are **units per tick**; float dt never enters the FP domain. Deterministic regardless of frame rate.
+- **Axis-separated integrate-and-resolve** (X then Y) against `RetroObstacle` level geometry (pre-quantized once to raw-int spans): snap to face, zero the collided axis velocity. Floors, walls, and ceilings just work — contact flags (`on_ground`/`hit_ceiling`/`hit_wall`) are resolver-owned and replace ad-hoc cartridge geometry checks.
+- **The quirk, rebuilt as midline ("wrong-side") ejection**: with `subpixel_wall_clip` enabled, ejection direction is chosen by which *half of the obstacle* the penetrating probe edge is in (the genuine NES tile-ejection question) instead of motion direction. A clip occurs iff per-tick speed exceeds half the obstacle thickness AND the contact-tick subpixel alignment lands the leading edge strictly past the midline — a single subpixel flips the outcome (worked example in `engine/retro/systems/collision.py`: raw 39168 blocks on the exact midline, 39169 clips). Quirk off = motion-based ejection, never clips. Obstacles thicker than 2× speed are categorically un-clippable (why floors are safe and the thin wall is not).
+- **Per-entity collision size** via the new `SubpixelColliderComponent` (no hardcodes); `profile.frac_bits` is now load-bearing (obstacles quantized at it; mismatched entities skipped with one warning so all raw compares share one scale).
+- **API revisions**: `register_retro_systems(world, profile=..., obstacles=...)` now returns the live `QuirkMovementSystem` (the toggle/tick-callback/clip-events handle — fixes the P2-D reflection hack); new `VirtualPlayfield` (engine/retro/playfield.py) maps virtual retro pixels to render coordinates so visual size == collision size by construction. The old `resolve_quirky` / `subpixel_wall_clip_rule` / `momentum_residual_rule` functions were **deleted** (their whole-move pos-transformer shape could not express per-axis ejection policy; keeping the names would have advertised compatibility that did not exist). The `momentum_residual` quirk was dropped — its test asserted nothing and its semantics conflict with axis resolution owning velocity zeroing; "additional quirk examples" remain in Follow-On.
+- **Tests rewritten** (`tests/unit/test_retro_quirks.py`, 17 tests + `test_retro_playfield.py`): fixed-tick accumulator semantics, exact px/tick integration, landing/standing stability, ceiling bonks, clip at alignment A / block at alignment B / one-subpixel flip / quirk-off control (the P2-B AC mirror), per-entity sizes, helper-returns-system, frac_bits-mismatch skip, mixed retro+normal independence.
+
+Track status returns to **Re-opened/In Progress** and will not be marked Complete until the user confirms the rebuilt layer (and the P2-D cartridge on top of it) meets their expectations.
 
 ## Track P2-C - Opt-in / Integration Mechanism for the Retro Layer
 
@@ -351,6 +371,20 @@ Verification outputs from this re-work session (abridged):
 The cartridge is now a small but real interactive sidescroller where the user can control the character, explore a level with platforms, and reliably observe + toggle the exact retro emergent behavior that P2-B implemented and P2-A/P2-C enabled. This directly addresses the feedback that the previous version had "a single blob character standing statically in the center of the playfield, there are no controls, there is no environment to interact with, there is nothing that would demonstrate the retro layer".
 
 Do not mark the track Complete until explicit user confirmation.
+
+**Re-work notes #2 (2026-06, after the full audit — cartridge rebuilt on the rebuilt layer):**
+
+The audit (see P2-B re-work notes) showed the interactive version above could never have worked: the resolver had no Y-axis resolution, so the player overlapped the ground at spawn and either fell through the world (the gate fired on the floor) or was teleported off-screen by the X-only clamp. The demo also mixed three different player sizes (0.8 hardcoded collision, 0.4×0.5 visual, 0.35×0.5 grounded check), rendered everything at half its collider size, and the T hotkey was doubly broken (`self.world` never set; reflection against a nonexistent `world._systems` attribute).
+
+The rebuilt cartridge (same tree, rewritten entrypoint + README + manifest description):
+
+- **Virtual 256×240 pixel playfield** (`VirtualPlayfield`): level geometry in integer pixels, positions/velocities 8.8 fixed point, subpixel = 1/256 of a *pixel*, one mapping to aspect2d. A single module-level `LEVEL: list[RetroObstacle]` is the source of truth — physics consumes it directly and the render rects are generated from it, so visual size == collision size by construction (one player size everywhere: 12×16 px).
+- **Real platformer numbers** (px/tick at 60 Hz): run 4.0, accel 0.125, decel 0.25, gravity 0.25, jump impulse 4.5, terminal fall −4.0 — all exact on the 1/256 grid. The clip wall is 6 px thick and 104 px tall (cannot be jumped over, even from the upper platform — the only way past is the clip); the ground (16) and platforms (10) are thicker than 2× any vertical speed, so floors/ceilings are categorically un-clippable. Spawn rests bottom-edge-exact on the ground (strict overlap keeps it stable).
+- **Controller split**: `control_tick` (registered via `retro_system.add_tick_callback`) applies game feel once per simulation tick using the resolver-owned `on_ground` flag; the per-frame `update` only syncs the render Transform through the playfield mapping and narrates `clip_events` with full attribution.
+- **Hotkeys**: C = teleport to the exact clipping alignment (x=153.5, full speed — clips on the 11th tick, the unit-test numbers); X = the blocked alignment 3 px away; T = toggle midline vs modern ejection via the `register_retro_systems` handle (root-fixes the old reflection bug). ~1 in 4 natural full-speed run-ups clip; grinding against the wall never does (velocity zeroes on contact) — a run-up is required, like the real hardware.
+- **End-to-end headless test** (`test_cartridge.py::test_retro_sidescroller_demo_loads_and_reproduces_wall_clip`): packs the cart, loads the real directory with a DummyBase, then **plays real frames** (40× `world.update(1/60)`) through all three hotkey paths and asserts clip (x > 206 + clip event) vs modern block (exactly 194.0) vs blocked alignment (194.0). This replaces the old load-time-only assertions.
+
+Verification this session: full unit suite green (incl. 17 rewritten retro quirk tests, 3 playfield tests, 19 cartridge tests); pack CLI produces a valid archive; headless smoke run reproduces clip → goal-pad and both blocked controls. Track remains **In Progress** until the user runs the cartridge and explicitly confirms the Acceptance criteria are met.
 
 ## Track P2-E - Documentation and Tutorial
 

@@ -329,7 +329,10 @@ class Game(ShowBase):
             entity = entities[0]
             input_comp = self.world.get_component(entity.id, InputComponent)
             if input_comp:
-                self._handle_player_input_debug(input_comp)
+                # Per-frame input state prints are debug noise for cartridges
+                # (they drown cartridge console output) - dev mode only.
+                if self.dev_mode:
+                    self._handle_player_input_debug(input_comp)
                 
                 # Handle speed effect demonstrations
                 if input_comp.action_just_pressed.get("apply_slowdown"):
