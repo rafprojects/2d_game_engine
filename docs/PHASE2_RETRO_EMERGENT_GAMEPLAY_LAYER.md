@@ -11,7 +11,7 @@
 | P2-A | Core retro math primitives (`engine/retro/` package: fixed-point arithmetic, `FixedPointVec2`, `SubpixelTransformComponent` or equivalent precision-aware components) | Complete ✅ | Medium |
 | P2-B | Reference quirk movement and collision systems (e.g. `NESStyleMovementSystem` or `QuirkMovementSystem` + collision resolver that intentionally applies and documents specific clipping/penetration/quirk rules) | Complete ✅ | Large |
 | P2-C | Opt-in / integration mechanism for the retro layer (fidelity profile hook, component/system flags, clean coexistence with default float/Vec2 paths so modern cartridges are unaffected) | Complete ✅ | Small-Medium |
-| P2-D | One or two small reference cartridges demonstrating a reproducible emergent mechanic (e.g. subpixel-enabled wall clip, momentum quirk, or documented classic glitch that only appears when the layer is active) | Complete ✅ | Medium |
+| P2-D | One or two small reference cartridges demonstrating a reproducible emergent mechanic (e.g. subpixel-enabled wall clip, momentum quirk, or documented classic glitch that only appears when the layer is active) | In Progress (re-work from feedback) | Medium |
 | P2-E | Documentation and tutorial ("Building Authentic Retro Mechanics with Cartridges" or equivalent; includes how cartridge authors opt in and why the emergent behavior occurs) | Planned | Small |
 
 ---
@@ -309,6 +309,48 @@ Keep the cartridge tiny — the point is the quirk, not a full game.
 - All new code type-hinted; pure-Py; self-contained like tgl_demo; one cart (SMB sidescroller) per user spec.
 
 Next track (P2-E docs/tutorial) can now reference this concrete, loadable, copyable cartridge as the primary example ("start from retro_sidescroller_demo, change the quirk list or start numbers, observe...").
+
+**Re-work notes (user feedback after initial delivery):**
+
+The initial delivery for P2-D was a minimal one-shot simulation in `initialize()` that forced the clip numbers and printed logs. This resulted in a static "blob" with no player controls, no ongoing platformer movement (run/jump/gravity), no interactive environment (multiple platforms, gaps, walls the player could approach under player control), and no live demonstration of the retro layer in action during gameplay.
+
+Per user direction:
+- P2-D track is flipped back to **In Progress**.
+- The reference cartridge must be an actual (simple) interactive 2D sidescroller.
+- The player must be able to control movement so that the retro conditions (subpixel positioning + quirk rules) can be observed and confirmed live.
+- The demo must make the retro layer *provable* (e.g. visible difference vs modern behavior, clear feedback when a quirk triggers the emergent clip, ability to reproduce the exact test conditions while playing).
+- Research basic sidescroller design (gravity, run acceleration, grounded jumps, platform layouts with gaps/walls) was performed.
+- The cartridge will be kept simple (no full art, no enemies, minimal code) but functional as a playable reference that exercises the QuirkMovementSystem every frame via a controller feeding velocities, with visuals and input.
+- The Implementation block and tests will be updated with the improved cartridge. It will **not** be marked Complete again until the user explicitly confirms the result meets the Acceptance criteria and their expectations for an interactive reference cart.
+
+The original "Implementation (P2-D)" block above documents the first attempt. All further changes, rationale, and final verification will be recorded in follow-up notes or an updated block at the end of this track section.
+
+**Re-work implementation summary (current state):**
+
+- Completely replaced the static one-shot repro with a real `RetroPlatformerController` (local System) that runs every frame.
+- Controller implements basic Mario-style platformer logic (run accel/decel, gravity, jump only when grounded via cheap rect overlap) and writes `current_velocity` (FixedPointVec2) on the player's `SubpixelMovementComponent`.
+- The registered `QuirkMovementSystem` then performs the FP integration + `resolve_quirky` (with the wall clip rule when enabled) and writes the (possibly quirk-modified) position/velocity back. This is exactly the intended division of responsibilities for a cartridge using the retro layer.
+- Level: long ground + floating platforms + one tall "clip wall" collider placed so that a full-speed horizontal approach from the correct subpixel alignment produces the emergent passage only with the quirk.
+- Visuals: colored rectangles (CardMaker + NodePath) for the player (red "blob") and platforms/wall. Positions are synced from the Subpixel pos each frame so you literally see the player move and clip.
+- Input: `InputSystem` + `InputComponent` with action bindings (left/right/jump). Controller also supports direct polling fallback.
+- Proof / demo features:
+  - 'C' forces the *exact* numbers from the unit test (start 4.09375, vx=2.0) so the known clip is trivially reproducible while the game is running.
+  - 'T' disables the quirk on the live system, resets the player to a run-up, and lets you experience the modern block on the identical wall. Re-enable to see the clip return.
+  - When a clip is detected during play the cart prints clear attribution ("CLIP DETECTED (live during play) ... only because the subpixel_wall_clip_rule ...").
+  - Console + (when available) on-screen text constantly remind the user that the retro layer is active and what the hotkeys do.
+- The existing P2-D test was updated to load the real cart (still exercises opt-in + controller creation) and then *manually drive* the exact repro after load using the exposed `player_st` / `player_sm`. Asserts the passage happens. Full suite remains 91 green; pack still produces a valid archive.
+- The track is deliberately left as "In Progress" (no status change to Complete) until the user explicitly confirms the interactive result is satisfactory and meets the Acceptance criteria.
+
+Verification outputs from this re-work session (abridged):
+- `python -m pytest ...::test_retro_sidescroller_demo_loads_and_reproduces_wall_clip -q` → 1 passed (after fixes for imports, DummyBase guards, Collider size, InputSystem, etc.).
+- `python -m pytest tests/unit/test_retro_quirks.py tests/unit/test_cartridge.py -q` → 29 passed.
+- Full `python -m pytest tests/unit/ -q` → 91 passed (non-interference).
+- Pack: "Included 5 files", valid .car archives created in every run.
+- Manual load + drive of the repro (setting the test start state on the live Subpixel components after the cart registered the retro system + controller) produces `final_x > 5.0` exactly as the unit test expects.
+
+The cartridge is now a small but real interactive sidescroller where the user can control the character, explore a level with platforms, and reliably observe + toggle the exact retro emergent behavior that P2-B implemented and P2-A/P2-C enabled. This directly addresses the feedback that the previous version had "a single blob character standing statically in the center of the playfield, there are no controls, there is no environment to interact with, there is nothing that would demonstrate the retro layer".
+
+Do not mark the track Complete until explicit user confirmation.
 
 ## Track P2-E - Documentation and Tutorial
 

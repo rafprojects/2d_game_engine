@@ -714,6 +714,8 @@ def test_retro_sidescroller_demo_loads_and_reproduces_wall_clip(tmp_path):
     """
     from pathlib import Path
 
+    from engine.retro import FixedPoint, FixedPointVec2
+
     cart_dir = Path(__file__).parent.parent.parent / "examples/cartridges/retro_sidescroller_demo"
     assert cart_dir.exists(), "P2-D SMB-spirit sidescroller reference cartridge must exist"
 
@@ -731,8 +733,9 @@ def test_retro_sidescroller_demo_loads_and_reproduces_wall_clip(tmp_path):
     # world.update(dt) for the clip repro step.
     from engine.core.system import World as RealWorld
 
+    real_world = RealWorld()
     loader = CartridgeLoader(
-        world=RealWorld(),
+        world=real_world,
         base=DummyBase(),
         resource_manager=DummyResourceManager(),
         extract_root=tmp_path / "extract_retro_ss",
@@ -747,19 +750,32 @@ def test_retro_sidescroller_demo_loads_and_reproduces_wall_clip(tmp_path):
         assert entry.profile.frac_bits == 8
         assert "subpixel_wall_clip" in entry.profile.enable_quirks
 
-        # The emergent clip (P2-B rule) was exercised by the cart at load time.
-        # The cart stores the SubpixelTransformComponent it created for the player
-        # and performed a controlled world.update(dt) with the exact start state
-        # from the unit test (start ~4.09375, vx=2, wall at 5, dt=0.6).
-        assert hasattr(entry, "player_st"), "cart exposes player SubpixelTransform for repro inspection"
+        # The interactive cartridge sets up the full retro layer (P2-C opt-in + player with
+        # Subpixel* + controller that will feed velocities to the Quirk system every frame).
+        # We do *not* expect a one-shot clip at load time anymore (that was the previous
+        # non-interactive version). Instead we drive the exact repro from the unit test
+        # after load to prove the layer is correctly wired for interactive use.
+        assert hasattr(entry, "player_st"), "cart exposes player SubpixelTransform"
+        assert hasattr(entry, "player_sm"), "cart exposes player SubpixelMovement"
+        assert hasattr(entry, "controller"), "cart has an interactive controller"
+        assert hasattr(entry, "profile") and "subpixel_wall_clip" in entry.profile.enable_quirks
+
+        # Drive the known clip repro (exact numbers from test_retro_quirks) using the
+        # live retro components + registered Quirk system. This proves the layer coding.
+        fb = 8
+        start_x = FixedPoint(4.0, frac_bits=fb) + FixedPoint.from_raw(0x18, frac_bits=fb)
+        entry.player_st.set_position(float(start_x), 0.0)
+        entry.player_sm.current_velocity = FixedPointVec2(2.0, 0.0, frac_bits=fb)
+
+        # Step the real world we passed to the loader. The Quirk system is registered on it.
+        real_world.update(0.6)
+
         final_x, _ = entry.player_st.get_position()
         assert final_x > 5.0, (
-            f"P2-D sidescroller reference cartridge must reproduce the wall clip passage "
-            f"(got final_x={final_x}); this only occurs with retro+rule active"
+            f"P2-D interactive sidescroller cart must allow the wall clip passage when "
+            f"driven with the exact test state (got final_x={final_x}); this only occurs "
+            "with the retro layer (P2-A math + P2-B quirk rule) active."
         )
-
-        # The cart also left the quirk system and player movement component for further inspection
-        assert hasattr(entry, "quirk_sys") or hasattr(entry, "player_sm")
     finally:
         _cleanup_modules()
         # Best-effort cleanup of any python_path the loader may have inserted
