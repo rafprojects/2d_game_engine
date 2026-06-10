@@ -178,6 +178,46 @@ class RetroPlatformerController(System):
         return False
 
     def update(self, dt: float) -> None:
+        """Run player controller logic + sync visuals. Called every world.update because this is a System."""
+        # --- Poll input this frame (now done here, since the RetroSidescrollerDemo.update is
+        # not invoked by the host; only world.update(dt) which drives registered Systems).
+        input_comp = None
+        try:
+            input_comp = self.world.get_component(self.player_id, InputComponent)
+        except Exception:
+            input_comp = None
+
+        if input_comp:
+            self.move_left = bool(
+                input_comp.action_active.get("move_left") or input_comp.action_just_pressed.get("move_left")
+            )
+            self.move_right = bool(
+                input_comp.action_active.get("move_right") or input_comp.action_just_pressed.get("move_right")
+            )
+            self.jump_pressed = bool(input_comp.action_just_pressed.get("jump"))
+        else:
+            # Raw fallback using mouseWatcher (works in real ShowBase runs)
+            if self.base and hasattr(self.base, "mouseWatcherNode"):
+                mw = self.base.mouseWatcherNode
+                self.move_left = mw.is_button_down("arrow_left") or mw.is_button_down("a")
+                self.move_right = mw.is_button_down("arrow_right") or mw.is_button_down("d")
+                self.jump_pressed = mw.is_button_down("space") or mw.is_button_down("w")
+            else:
+                self.move_left = self.move_right = self.jump_pressed = False
+
+        # Hotkeys C (force exact test clip) and T (toggle quirk) with edge detection
+        if self.base and hasattr(self.base, "mouseWatcherNode"):
+            mw = self.base.mouseWatcherNode
+            c_down = mw.is_button_down("c")
+            if c_down and not getattr(self, "_c_was_down", False):
+                self.force_exact_clip_test()
+            self._c_was_down = c_down
+
+            t_down = mw.is_button_down("t")
+            if t_down and not getattr(self, "_t_was_down", False):
+                self.toggle_quirk()
+            self._t_was_down = t_down
+
         st = self.player_st
         sm = self.player_sm
         if not st or not sm or not sm.can_move:
@@ -185,7 +225,7 @@ class RetroPlatformerController(System):
 
         fb = st.frac_bits
 
-        # --- Read input state (polled from the entrypoint which reads the InputComponent or base) ---
+        # --- Read input state for movement (already polled above) ---
         desired_vx = 0.0
         if self.move_right:
             desired_vx = RUN_SPEED
@@ -209,9 +249,9 @@ class RetroPlatformerController(System):
         # Gravity
         cvy -= GRAVITY * dt
 
-        # Jump (use the state set by the entrypoint from action_just_pressed)
-        self._grounded = self._is_grounded(st.position.x.to_float() if hasattr(st.position.x, 'to_float') else float(st.position.x),
-                                           st.position.y.to_float() if hasattr(st.position.y, 'to_float') else float(st.position.y))
+        # Jump (use the state set from input above)
+        px, py = st.get_position()
+        self._grounded = self._is_grounded(px, py)
         if self.jump_pressed and self._grounded:
             cvy = JUMP_IMPULSE
             self._grounded = False
@@ -466,34 +506,8 @@ class RetroSidescrollerDemo:
         jump = bool(ic.action_just_pressed.get("jump"))
         return left, right, jump
 
-    def update(self, dt: float) -> None:  # called by host if it polls the entry instance
-        # Feed the latest input state into the controller (so it can use it in its System update).
-        left, right, jump = self._update_input_from_component()
-        if hasattr(self, "controller"):
-            self.controller.set_input_state(left, right, jump)
-
-            # Hotkeys for demo features (polled from base for reliability)
-            if self.base and hasattr(self.base, "mouseWatcherNode"):
-                mw = self.base.mouseWatcherNode
-                # 'c' or 'C' - force exact clip test
-                if mw.is_button_down("c"):
-                    self.controller.force_exact_clip_test()
-                # 't' or 'T' - toggle quirk
-                if mw.is_button_down("t"):
-                    # only toggle on the rising edge - simple debounce via a tiny flag on self
-                    if not getattr(self, "_t_down", False):
-                        self.controller.toggle_quirk()
-                        self._t_down = True
-                        # update status text if present
-                        if hasattr(self, "_status_text") and self._status_text:
-                            enabled = self.controller._quirk_enabled
-                            self._status_text.setText(
-                                f"Retro quirk: subpixel_wall_clip {'ENABLED' if enabled else 'DISABLED (modern mode)'}"
-                            )
-                    else:
-                        pass
-                else:
-                    self._t_down = False
+    def update(self, dt: float) -> None:  # called by host if it polls the entry instance (may not be; logic moved to controller)
+        pass  # Input/hotkey logic is now inside RetroPlatformerController.update (which is a real System)
 
     def teardown(self, context: Any | None = None) -> None:
         print("[P2-D] retro_sidescroller_demo (interactive) teardown")
