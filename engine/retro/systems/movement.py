@@ -41,11 +41,12 @@ from engine.physics.components.collider_component import ColliderComponent
 from ..components import SubpixelTransformComponent, SubpixelMovementComponent
 from .collision import QuirkRegistry, resolve_quirky
 from ..fixed_point import FixedPoint, FixedPointVec2
+from ..profile import RetroProfile  # P2-C lightweight fidelity profile for opt-in
 
 
 class QuirkMovementSystem(System):
     """
-    Reference implementation of NES-style / quirk movement (P2-B).
+    Reference implementation of NES-style / quirk movement (P2-B + P2-C opt-in).
 
     Applies velocity in the fixed-point domain, performs a full tentative step,
     then resolves against obstacles (snapped from any ColliderComponents in the
@@ -55,11 +56,28 @@ class QuirkMovementSystem(System):
     Quantization is applied at well-defined points so that the "why this quirk
     happens" is always reproducible and explainable.
 
-    Usage:
-        reg = QuirkRegistry()
-        reg.enable("subpixel_wall_clip")
-        sys = QuirkMovementSystem(world, quirk_registry=reg)
-        # or
+    P2-C opt-in:
+    - Per-entity: Add Subpixel* components (SubpixelTransformComponent and/or
+      SubpixelMovementComponent) to entities that should use retro precision
+      and quirks. These act as the "flag" / enhanced transform (per PHASE2
+      suggestion of "flag on an enhanced transform" or RetroPrecisionComponent).
+    - At cartridge initialize time: Create a RetroProfile (simple fidelity
+      profile concept) and pass it when registering the system via
+      world.add_system(...). Or use the convenience register_retro_systems().
+    - The system only ever queries entities that have the Subpixel* components,
+      ensuring clean coexistence with default float systems.
+
+    Usage (with profile for P2-C):
+        from engine.retro import RetroProfile, QuirkMovementSystem
+        profile = RetroProfile("nes", frac_bits=8, enable_quirks=["subpixel_wall_clip"])
+        sys = QuirkMovementSystem(world, profile=profile)
+
+        # or the one-liner helper (recommended for P2-D style cartridges):
+        from engine.retro import register_retro_systems, RetroProfile
+        profile = RetroProfile("nes", frac_bits=8, enable_quirks=["subpixel_wall_clip"])
+        register_retro_systems(context.world, profile=profile)
+
+    Legacy (still supported):
         sys = QuirkMovementSystem(world)
         sys.enable_quirk("subpixel_wall_clip")
     """
@@ -69,10 +87,17 @@ class QuirkMovementSystem(System):
         world,
         extra_obstacles: list[dict] | None = None,
         quirk_registry: QuirkRegistry | None = None,
+        profile: "RetroProfile" | None = None,
     ) -> None:
         super().__init__(world)
         self._extra_obstacles: list[dict] = extra_obstacles or []
         self.quirk_registry: QuirkRegistry = quirk_registry or QuirkRegistry()
+        self.profile: RetroProfile = profile or RetroProfile(name="modern")
+
+        # Auto-enable quirks from the profile (P2-C opt-in at init time)
+        if self.profile.enable_quirks:
+            for name in self.profile.enable_quirks:
+                self.enable_quirk(name)
 
     def enable_quirk(self, name: str) -> None:
         """Enable a named quirk for this system instance."""

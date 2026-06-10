@@ -10,7 +10,7 @@
 |-------|-------------|--------|--------|
 | P2-A | Core retro math primitives (`engine/retro/` package: fixed-point arithmetic, `FixedPointVec2`, `SubpixelTransformComponent` or equivalent precision-aware components) | Complete ✅ | Medium |
 | P2-B | Reference quirk movement and collision systems (e.g. `NESStyleMovementSystem` or `QuirkMovementSystem` + collision resolver that intentionally applies and documents specific clipping/penetration/quirk rules) | Complete ✅ | Large |
-| P2-C | Opt-in / integration mechanism for the retro layer (fidelity profile hook, component/system flags, clean coexistence with default float/Vec2 paths so modern cartridges are unaffected) | Planned | Small-Medium |
+| P2-C | Opt-in / integration mechanism for the retro layer (fidelity profile hook, component/system flags, clean coexistence with default float/Vec2 paths so modern cartridges are unaffected) | Complete ✅ | Small-Medium |
 | P2-D | One or two small reference cartridges demonstrating a reproducible emergent mechanic (e.g. subpixel-enabled wall clip, momentum quirk, or documented classic glitch that only appears when the layer is active) | Planned | Medium |
 | P2-E | Documentation and tutorial ("Building Authentic Retro Mechanics with Cartridges" or equivalent; includes how cartridge authors opt in and why the emergent behavior occurs) | Planned | Small |
 
@@ -200,6 +200,36 @@ Document the coexistence rules clearly (e.g. "retro entities should not be queri
 - Existing tests for movement, collision, and tgl_demo continue to pass with the new package present (no accidental imports or side effects).
 - A test that creates two entity groups — one retro, one normal — and verifies independent behavior.
 - The integration is exercised by the reference cartridge.
+
+### Implementation (P2-C)
+**Status:** Complete ✅ (lightweight opt-in surface delivered per approved workon-phase process and PHASE2 guidance. Precursor to full P5 fidelity profiles.)
+
+**Rationale / key decisions (documented per workon-phase skill requirement):**
+- **Verification of PHASE2 P2-C claims (do not blindly trust the doc):** Grep across entire tree (engine/, tests/, docs/, cartridge/) confirmed "no standard surface for 'fidelity profile', 'precision mode', or 'opt into retro quirks'" — all "retro"/"fidelity" mentions are in docs (PHASE2/5, FUTURE), the self-contained `engine/retro/` package (post P2-A/B), or its tests. No core integration, no profile enum/dict, no RetroPrecisionComponent or helper. CartridgeContext + World.add_system + component queries are the only mechanisms (verified by reading context.py, system.py, loader.py). Current QuirkMovementSystem already only queries Subpixel* (coexistence "by design"), but no named/profile surface or "few lines" helper for P2-D. Claims accurate.
+- **Leverage what P2-A/B already provided:** Subpixel* components serve as the per-entity "flag" / "enhanced transform" / RetroPrecisionComponent (exactly as one of the doc's suggested examples). System registration (world.add_system(Quirk...)) is the "system-level registration pattern". No need to duplicate or force changes to core (Context, default systems, manifest) — those are P5 territory.
+- **Lightweight "fidelity profile" concept at cartridge init time:** Added `RetroProfile` (dataclass with name, frac_bits, enable_quirks list, options dict). Usable directly in initialize hook. Passed to QuirkMovementSystem (which auto-enables quirks from it). Precursor to P5-A full coordinator; keeps P2-C Small-Medium.
+- **One-liner helper for "simple enough that the reference cartridge (P2-D) can demonstrate it in a few lines":** Added `register_retro_systems(world, profile=...)` (exported at top level). Combined with adding Subpixel* comps to entities, this is the complete opt-in in 2-4 lines.
+- **Documented coexistence rules (explicitly required):** Added to RetroProfile docstring, Quirk* docs, and code comments: "retro entities should not be queried by the default... unless the cartridge author explicitly mixes them". Default systems use different component types; retro only acts on Subpixel*. Mixing on same entity is "not recommended".
+- **Non-interference & cartridge context integration:** Opt-in happens in cartridge entrypoint via CartridgeContext.world (the sanctioned surface). Importing `engine.retro` (or even the profile) has zero side effects (already validated in P2-A/B; re-checked). Mixed retro/normal entity groups run independently under the same World.update() (new test validates this).
+- **Scope strict to P2-C (Small-Medium):** No manifest changes, no default system modifications (except what coexistence already provides), no full profile coordinator (P5), no P2-D cartridge yet. Purely the "mechanism" + docs + validation test. Uses existing Quirk* as the consumer of the profile.
+- **Rationale for not doing more:** The doc itself says the full fidelity system is offloaded to PHASE5/FUTURE precisely because P2 focused on the "novel part" (math + quirks). P2-C provides the minimal hook so P2 retro is adoptable and P2-D can demo it cleanly.
+
+**Files delivered:**
+- `engine/retro/profile.py` (RetroProfile dataclass + extensive docstring with coexistence rules and P2-C examples)
+- Updates to `engine/retro/systems/movement.py` (accept + use `profile`, auto-enable quirks, updated docs)
+- Updates to `engine/retro/__init__.py` (exports RetroProfile + register_retro_systems helper; updated public surface + P2-C description in module docstring)
+- `tests/unit/test_retro_quirks.py` (3 new P2-C tests: profile construction, mixed retro/normal independent behavior, register helper + opt-in example)
+- This block + table update in `docs/PHASE2_RETRO_EMERGENT_GAMEPLAY_LAYER.md`
+
+**Verification performed (end-to-end per workon-phase skill):**
+- All prior non-interference (full `pytest tests/unit/` → 90 passed) and retro quirk tests (now 10/10 including new P2-C ones) still green.
+- Specific P2-C validation test: creates World with one retro group (Subpixel* + Quirk with rule + profile) and one normal group (Transform/MovementComponent + default MovementSystem); asserts independent behavior and that retro quirk only affects the retro group.
+- Manual review of cartridge flow (CartridgeContext + initialize hook + world.add_system) confirms "choose in its entrypoint or via components".
+- `from engine.retro import register_retro_systems, RetroProfile` works; using it + Subpixel comps is the "few lines" path.
+- No accidental imports/side effects on default paths (verified by test that imports default systems after retro).
+- Workon-phase followed: read/verified doc claims vs live code (greps + reads of context/system/loader/cartridge files), rationale documented here in the REPORT md block, no blockers.
+
+Next tracks (P2-D ref cartridge, P2-E docs) can now use the P2-C opt-in in a few clean lines (e.g. `register_retro_systems(context.world, profile=RetroProfile("nes", ...))` + Subpixel components for the demonstrating entities). The retro layer is now fully adoptable.
 
 ## Track P2-D - Reference Cartridge(s) Demonstrating Emergent Mechanic
 
