@@ -14,6 +14,6 @@
   "python_path": "python",
   "metadata": {
     "title": "Retro Sidescroller Demo (SMB Spirit - Wall Clip)",
-    "description": "Minimal 2D sidescroller reference cartridge demonstrating P2-D: opt-in to the retro layer (P2-C) + reproducible subpixel wall clip emergent behavior (P2-B) using the exact reference quirk rule. One cartridge suffices to best show the iconic clip."
+    "description": "Playable SMB-spirit sidescroller reference cartridge (P2-D). A 256x240 virtual-pixel level on the fixed-tick retro layer (8.8 fixed point, 60 Hz) where the subpixel wall clip genuinely emerges from midline ejection: run at the thin wall at full speed and the right subpixel alignment ejects you out the far side. C/X reproduce the exact clipping/blocked alignments; T toggles modern vs retro ejection."
   }
 }

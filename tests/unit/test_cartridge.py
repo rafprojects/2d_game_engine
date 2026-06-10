@@ -694,27 +694,23 @@ def test_loader_passes_cartridge_context_and_supports_new_style_hook(tmp_path):
 # ------------------------------------------------------------------
 
 def test_retro_sidescroller_demo_loads_and_reproduces_wall_clip(tmp_path):
-    """P2-D validation + explicit user requirement.
+    """P2-D end-to-end validation (re-worked, drives real frames headless).
 
-    One of the sample reference cartridges must be a 2D sidescroller in Super
-    Mario Bros spirit "to best show the wall clip". If one suffices, use just
-    that one.
+    One reference cartridge must be a 2D sidescroller in Super Mario Bros
+    spirit "to best show the wall clip". This test goes beyond load-time
+    wiring: it loads the real cartridge, then plays it frame-by-frame with
+    no window (DummyBase) and asserts the emergent behavior end-to-end:
 
-    This test:
-    - Loads the real examples/cartridges/retro_sidescroller_demo (dir mode)
-    - Verifies P2-C opt-in happened (RetroProfile with frac_bits=8 + clip quirk)
-    - Confirms the cart exercised the exact clip repro (numbers + wall from
-      test_retro_quirks.py) and the emergent passage occurred (x > 5.0 after
-      the step that the QuirkMovementSystem + rule performed).
-    - Exercises pack CLI on the real reference cart (AC).
-    - Leaves modern paths untouched (non-interference covered by full suite).
+    - C-hotkey path (force_clip_alignment) + 40 frames -> the player CLIPS
+      through the 6px wall (x > 206) and a clip event was recorded.
+    - T-hotkey path (toggle_quirk -> modern ejection) + same approach ->
+      BLOCKED at exactly x = 194.0.
+    - X-hotkey path (force_block_alignment, quirk back on) -> blocked too:
+      the quirk is alignment-dependent, not a pass-through.
 
-    The cartridge itself is the "test" artifact: a runnable, packable,
-    studyable SMB-spirit platformer that makes the P2-B rule visible.
+    Also exercises the pack CLI on the real cart (P2-D AC).
     """
     from pathlib import Path
-
-    from engine.retro import FixedPoint, FixedPointVec2
 
     cart_dir = Path(__file__).parent.parent.parent / "examples/cartridges/retro_sidescroller_demo"
     assert cart_dir.exists(), "P2-D SMB-spirit sidescroller reference cartridge must exist"
@@ -725,12 +721,9 @@ def test_retro_sidescroller_demo_loads_and_reproduces_wall_clip(tmp_path):
     assert exit_code == 0
     assert out_car.exists()
 
-    # Load the real source dir (the dev/reference path) and inspect the repro
-    # the cartridge performed in its initialize hook using the registered
-    # retro system + profile + Subpixel components + the exact clip wall.
-    # Use a real World (not Dummy) because the cart's initialize calls
-    # register_retro_systems which does world.add_system(...) and then
-    # world.update(dt) for the clip repro step.
+    # Real World: the cart registers systems and we drive world.update() for
+    # real frames. DummyBase is fine - the cart guards every base usage
+    # (accept / mouseWatcherNode / setBackgroundColor) with hasattr.
     from engine.core.system import World as RealWorld
 
     real_world = RealWorld()
@@ -741,32 +734,45 @@ def test_retro_sidescroller_demo_loads_and_reproduces_wall_clip(tmp_path):
         extract_root=tmp_path / "extract_retro_ss",
     )
 
+    def play_frames(n: int):
+        for _ in range(n):
+            real_world.update(1.0 / 60.0)  # exactly one 60Hz retro tick each
+
     try:
         ctx = loader.load_directory(str(cart_dir))
         entry = ctx.entry_instance
 
-        # Opt-in surface (P2-C) exercised by the cart
-        assert hasattr(entry, "profile"), "cart should expose the RetroProfile used for opt-in"
+        # Opt-in surface (P2-C) exercised by the cart.
         assert entry.profile.frac_bits == 8
+        assert entry.profile.tick_hz == 60
         assert "subpixel_wall_clip" in entry.profile.enable_quirks
+        assert hasattr(entry, "player_st") and hasattr(entry, "player_sm")
+        assert hasattr(entry, "retro_system"), "register_retro_systems handle kept"
+        assert entry.retro_system in real_world.systems
 
-        # The interactive cartridge sets up the full retro layer (P2-C opt-in + player with
-        # Subpixel* + controller that will feed velocities to the Quirk system every frame).
-        # We do *not* expect a one-shot clip at load time anymore (that was the previous
-        # non-interactive version). Instead we drive the exact repro from the unit test
-        # after load to prove the layer is correctly wired for interactive use.
-        assert hasattr(entry, "player_st"), "cart exposes player SubpixelTransform"
-        assert hasattr(entry, "player_sm"), "cart exposes player SubpixelMovement"
-        assert hasattr(entry, "_controller") or hasattr(entry, "controller"), "cart has an interactive controller"
-        assert hasattr(entry, "profile") and "subpixel_wall_clip" in entry.profile.enable_quirks
+        # 1) Quirk ON at the exact clip alignment: emerges through the wall.
+        clipped_events = []
+        entry.force_clip_alignment()
+        for _ in range(40):
+            real_world.update(1.0 / 60.0)
+            clipped_events.extend(entry.retro_system.clip_events)
+        x_clip = entry.player_st.get_position()[0]
+        assert x_clip > 206.0, f"expected clip past the wall, got x={x_clip}"
+        assert any(ev["obstacle"] == "clip_wall" for ev in clipped_events)
 
-        # NOTE: The exact clip repro (setting the large test numbers + extra wall at 5 + assert final >5)
-        # is exercised and proven in tests/unit/test_retro_quirks.py (the dedicated unit test for the rule).
-        # Here we only assert that this tgl-structured reference cart loaded successfully with the
-        # retro layer fully integrated (player has the Subpixel* "opt-in" components, the Quirk system
-        # was registered via the P2-C one-liner + profile, and our controller is present to drive it).
-        # The interactive visual demo (moving red player rect + gray environment rects via RenderSystem,
-        # responsive keys, C to force clip state, T to toggle) is for manual run with real base to confirm.
+        # 2) Same approach with the quirk toggled off (modern ejection): blocked.
+        entry.toggle_quirk()
+        entry.force_clip_alignment()
+        play_frames(40)
+        x_modern = entry.player_st.get_position()[0]
+        assert x_modern == 194.0, f"modern ejection must block at 194.0, got {x_modern}"
+
+        # 3) Quirk back on but the blocked alignment (3px away): still blocked.
+        entry.toggle_quirk()
+        entry.force_block_alignment()
+        play_frames(40)
+        x_blocked = entry.player_st.get_position()[0]
+        assert x_blocked == 194.0, f"alignment B must block even with quirk on, got {x_blocked}"
     finally:
         _cleanup_modules()
         # Best-effort cleanup of any python_path the loader may have inserted
