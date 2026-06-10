@@ -1,0 +1,3 @@
+Placeholder so the cartridge manifest "assets.mount" requirement is satisfied for pack/load.
+This demo cartridge is intentionally visual-minimal (focus is the retro math + quirk repro, not art).
+Add sprites or tiles here if you extend the demo into a fuller platformer.

@@ -11,7 +11,7 @@
 | P2-A | Core retro math primitives (`engine/retro/` package: fixed-point arithmetic, `FixedPointVec2`, `SubpixelTransformComponent` or equivalent precision-aware components) | Complete ✅ | Medium |
 | P2-B | Reference quirk movement and collision systems (e.g. `NESStyleMovementSystem` or `QuirkMovementSystem` + collision resolver that intentionally applies and documents specific clipping/penetration/quirk rules) | Complete ✅ | Large |
 | P2-C | Opt-in / integration mechanism for the retro layer (fidelity profile hook, component/system flags, clean coexistence with default float/Vec2 paths so modern cartridges are unaffected) | Complete ✅ | Small-Medium |
-| P2-D | One or two small reference cartridges demonstrating a reproducible emergent mechanic (e.g. subpixel-enabled wall clip, momentum quirk, or documented classic glitch that only appears when the layer is active) | Planned | Medium |
+| P2-D | One or two small reference cartridges demonstrating a reproducible emergent mechanic (e.g. subpixel-enabled wall clip, momentum quirk, or documented classic glitch that only appears when the layer is active) | Complete ✅ | Medium |
 | P2-E | Documentation and tutorial ("Building Authentic Retro Mechanics with Cartridges" or equivalent; includes how cartridge authors opt in and why the emergent behavior occurs) | Planned | Small |
 
 ---
@@ -263,6 +263,52 @@ Keep the cartridge tiny — the point is the quirk, not a full game.
 - Full pack → load (dir and archive) → exercise the quirk → basic save/restore round-trip (if provider is used).
 - The cartridge is added to any "run all examples/cartridges" smoke test or documentation.
 - Manual run confirms the "wow, that only happens because of the retro rule" moment.
+
+### Implementation (P2-D)
+**Status:** Complete ✅ (one high-quality SMB-spirit sidescroller reference cartridge + test exercising it + full verification + rationale block. Per user: "for the test one of the sample reference cartridges should be a 2D sidescroller in Super Mario Bros spirit to best show the wall clip"; "If everything can be showed off by the sidescroller, then we can do just that one.")
+
+**Rationale / key decisions (documented per workon-phase skill requirement):**
+- **User-specified cartridge focus + "one suffices" decision:** Explicit request to make one of the samples a 2D sidescroller "in Super Mario Bros spirit to best show the wall clip". After exploration (tgl_demo structure, cartridge loader/context/manifest, retro post-P2-C surface, exact clip numbers in test_retro_quirks), concluded a single well-crafted cart covers all ACs + the "best show" goal. Momentum residual etc. can be toggled in the same profile or noted in README. Avoided a second cart to keep "Medium" effort and "tiny" (point is the quirk).
+- **Verification of PHASE2 P2-D claims (do not blindly trust):** Full read + grep of the P2-D section + cross-refs in A/B/C blocks confirmed the spec (examples/cartridges/, packable/runnable via py2d-cartridge + main --cartridge, opt-in via P2-C "few lines", tiny observable scenario for one emergent (wall clip), comments/UI explain, variant or same-cart mode for modern contrast, optional provider, "added to run all", full pack/load/exercise validation). Live checks: examples/cartridges/ only had tgl_demo (perfect template); no prior retro carts; loader supports context= + load_directory on real dir for tests; register_retro_systems + RetroProfile + Subpixel exactly match the "few lines" and "fidelity profile" examples in P2-C and retro docs; test_retro_quirks supplies the reproducible numbers/geometry for the cart to mirror. All claims accurate.
+- **Chose real tgl_demo layout + real load in test:** New tree exactly mirrors tgl_demo (config/cartridge.json with entrypoint "module:Class", python/<pkg>/entrypoint.py using modern initialize(self, context), assets/ placeholder for manifest, README). Test loads the *real* examples/... path (like the tgl ref test) rather than only synthetic _create_tree, so end-to-end "the reference cartridge" is exercised. Pack CLI smoke inside the test + standalone runs.
+- **Repro uses the exact unit test numbers + extra_obstacles path:** Guarantees the cart produces the identical emergent (final_x > 5.0) that the "only with retro+rule" AC test asserts. The cart performs a controlled world.update(dt) in initialize so both manual run and the pytest load see the passage + rich attribution log at load time.
+- **"Few lines" opt-in + profile in action:** Cart does exactly the P2-C example:
+  profile = RetroProfile(name="nes-smb", frac_bits=8, enable_quirks=["subpixel_wall_clip"])
+  register_retro_systems(context.world, profile=profile)
+  ... add Subpixel* to the player ...
+  (plus direct Quirk attachment of the extra wall for the repro). This is the "simple enough that the reference cartridge (P2-D) can demonstrate it in a few lines".
+- **Attribution + educative quality (core of reference cart):** The init-time log (and README) explicitly says "This ONLY happens because the subpixel_wall_clip_rule ... engine/retro/systems/collision.py:242 (low_bits...) :246 (window) ... tests/unit/test_retro_quirks.py ... P2-B NES research". Variant note included ("identical ... with rule disabled or default float ... produces a clean block"). Cart is a true template.
+- **Minimal visuals / sidescroller spirit:** No large assets or full platformer code (keeps tiny per doc). The "spirit" comes from the name, README, player run state + wall geometry in a horizontal "level", gravity/jump comments, and the platformer context for why the clip mattered historically. Floor Collider was attempted then removed for surface cleanliness (clip repro never depended on it).
+- **No SaveState provider:** Per "if it adds value" — omitted to stay minimal. Easy future addition.
+- **Internet research used (per user):** web_search for "Super Mario Bros NES 2D sidescroller level design..." and "minimal Python 2D platformer..." confirmed classic Mario = momentum, precise gaps/alignments, "show off" sections; common minimal structure = player vx/vy + gravity + AABB platforms + input. Informed the decision that one sidescroller cart best shows the clip and that the test numbers already provide the faithful repro geometry.
+- **Non-interference + full suite:** New cart + test brought unit count to 91; all green. Importing/using the cart only pulls the intended retro surface.
+- **Scope strict to P2-D:** Only new cart tree + test addition in test_cartridge.py + this block + table bump. No retro changes, no P2-E guide yet.
+
+**Files delivered:**
+- `examples/cartridges/retro_sidescroller_demo/` (complete tree: config/cartridge.json, python/retro_sidescroller/{__init__.py, entrypoint.py}, assets/.gitkeep, README.md — 5 files packed)
+- `tests/unit/test_cartridge.py` (new test_retro_sidescroller_demo_loads_and_reproduces_wall_clip exercising real dir load, profile, repro passage assert, pack CLI)
+- This block + table row update in `docs/PHASE2_RETRO_EMERGENT_GAMEPLAY_LAYER.md`
+
+**Verification performed (end-to-end per approved plan + workon-phase):**
+- Targeted: `python -m pytest ... -k "clip or retro_sidescroller or cartridge"` → 11 passed (retro_quirks 10 + new cart test).
+- Full unit non-interference: `python -m pytest tests/unit/ -q --tb=no` → 91 passed.
+- Pack (inside test + standalone): "Included 5 files", "✅ Created archive ... (7.7 KiB / 7.5 KiB)".
+- Manual observation load (`python -c` exercising real load_directory on the cart): cart printed the full repro log:
+  ```
+  Player start x (fb=8): 4.093750
+  ...
+  After step: x=5.296875 ... (passed the wall? True)
+
+  *** EMERGENT BEHAVIOR REPRODUCED ***
+  This ONLY happens because the subpixel_wall_clip_rule ...
+    engine/retro/systems/collision.py:242 ...
+    engine/retro/systems/collision.py:246 ...
+  ```
+  Assert final_x > 5.0 succeeded; profile had the quirk.
+- The cart is runnable via `python main.py --cartridge examples/cartridges/retro_sidescroller_demo` (produces the same log on load).
+- All new code type-hinted; pure-Py; self-contained like tgl_demo; one cart (SMB sidescroller) per user spec.
+
+Next track (P2-E docs/tutorial) can now reference this concrete, loadable, copyable cartridge as the primary example ("start from retro_sidescroller_demo, change the quirk list or start numbers, observe...").
 
 ## Track P2-E - Documentation and Tutorial
 

@@ -687,3 +687,86 @@ def test_loader_passes_cartridge_context_and_supports_new_style_hook(tmp_path):
         assert loaded.manifest.name == "Test Cartridge"
     finally:
         _cleanup_modules()
+
+
+# ------------------------------------------------------------------
+# P2-D: Reference cartridge (SMB-spirit sidescroller for wall clip)
+# ------------------------------------------------------------------
+
+def test_retro_sidescroller_demo_loads_and_reproduces_wall_clip(tmp_path):
+    """P2-D validation + explicit user requirement.
+
+    One of the sample reference cartridges must be a 2D sidescroller in Super
+    Mario Bros spirit "to best show the wall clip". If one suffices, use just
+    that one.
+
+    This test:
+    - Loads the real examples/cartridges/retro_sidescroller_demo (dir mode)
+    - Verifies P2-C opt-in happened (RetroProfile with frac_bits=8 + clip quirk)
+    - Confirms the cart exercised the exact clip repro (numbers + wall from
+      test_retro_quirks.py) and the emergent passage occurred (x > 5.0 after
+      the step that the QuirkMovementSystem + rule performed).
+    - Exercises pack CLI on the real reference cart (AC).
+    - Leaves modern paths untouched (non-interference covered by full suite).
+
+    The cartridge itself is the "test" artifact: a runnable, packable,
+    studyable SMB-spirit platformer that makes the P2-B rule visible.
+    """
+    from pathlib import Path
+
+    cart_dir = Path(__file__).parent.parent.parent / "examples/cartridges/retro_sidescroller_demo"
+    assert cart_dir.exists(), "P2-D SMB-spirit sidescroller reference cartridge must exist"
+
+    # Pack the real reference cart (AC + "added to examples" validation)
+    out_car = tmp_path / "retro_sidescroller_demo_p2d.car"
+    exit_code = cartridge_pack.main([str(cart_dir), "-o", str(out_car), "--force"])
+    assert exit_code == 0
+    assert out_car.exists()
+
+    # Load the real source dir (the dev/reference path) and inspect the repro
+    # the cartridge performed in its initialize hook using the registered
+    # retro system + profile + Subpixel components + the exact clip wall.
+    # Use a real World (not Dummy) because the cart's initialize calls
+    # register_retro_systems which does world.add_system(...) and then
+    # world.update(dt) for the clip repro step.
+    from engine.core.system import World as RealWorld
+
+    loader = CartridgeLoader(
+        world=RealWorld(),
+        base=DummyBase(),
+        resource_manager=DummyResourceManager(),
+        extract_root=tmp_path / "extract_retro_ss",
+    )
+
+    try:
+        ctx = loader.load_directory(str(cart_dir))
+        entry = ctx.entry_instance
+
+        # Opt-in surface (P2-C) exercised by the cart
+        assert hasattr(entry, "profile"), "cart should expose the RetroProfile used for opt-in"
+        assert entry.profile.frac_bits == 8
+        assert "subpixel_wall_clip" in entry.profile.enable_quirks
+
+        # The emergent clip (P2-B rule) was exercised by the cart at load time.
+        # The cart stores the SubpixelTransformComponent it created for the player
+        # and performed a controlled world.update(dt) with the exact start state
+        # from the unit test (start ~4.09375, vx=2, wall at 5, dt=0.6).
+        assert hasattr(entry, "player_st"), "cart exposes player SubpixelTransform for repro inspection"
+        final_x, _ = entry.player_st.get_position()
+        assert final_x > 5.0, (
+            f"P2-D sidescroller reference cartridge must reproduce the wall clip passage "
+            f"(got final_x={final_x}); this only occurs with retro+rule active"
+        )
+
+        # The cart also left the quirk system and player movement component for further inspection
+        assert hasattr(entry, "quirk_sys") or hasattr(entry, "player_sm")
+    finally:
+        _cleanup_modules()
+        # Best-effort cleanup of any python_path the loader may have inserted
+        for p in list(sys.path):
+            ps = str(p).lower()
+            if "retro_sidescroller" in ps or str(tmp_path) in str(p):
+                try:
+                    sys.path.remove(p)
+                except ValueError:
+                    pass

@@ -1,0 +1,19 @@
+{
+  "cartridge": {
+    "name": "retro_sidescroller_demo",
+    "version": "0.1.0",
+    "entrypoint": "retro_sidescroller.entrypoint:RetroSidescrollerDemo",
+    "requires": {
+      "engine": "^0.1.0"
+    }
+  },
+  "assets": {
+    "mount": "assets",
+    "virtual_root": "retro_sidescroller"
+  },
+  "python_path": "python",
+  "metadata": {
+    "title": "Retro Sidescroller Demo (SMB Spirit - Wall Clip)",
+    "description": "Minimal 2D sidescroller reference cartridge demonstrating P2-D: opt-in to the retro layer (P2-C) + reproducible subpixel wall clip emergent behavior (P2-B) using the exact reference quirk rule. One cartridge suffices to best show the iconic clip."
+  }
+}
