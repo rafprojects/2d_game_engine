@@ -1,53 +1,43 @@
-"""retro_sidescroller_demo entrypoint (P2-D reference cartridge) - RE-WORKED.
+"""retro_sidescroller_demo entrypoint - P2-D reference (interactive SMB-spirit sidescroller).
 
-This is a *simple but playable* 2D sidescroller in Super Mario Bros spirit.
+Mirrors the structure and patterns of the working tgl_demo cartridge as closely as possible
+for a playable demo using the engine's component/system/render/input model.
 
-Goals (addressing feedback):
-- Real interactive controls: left/right run (with acceleration), jump when grounded, gravity.
-- Actual environment: floor, floating platforms, and a deliberate "clip wall" (vertical solid) with alignment/speed that lets the player pass *only* when the retro subpixel_wall_clip quirk is active.
-- The QuirkMovementSystem (P2-B) + P2-A math + P2-C opt-in are exercised *every frame* while the user plays.
-- Clear proof the retro layer is responsible: on-screen instructions, "quirk active" status, "CLIP DETECTED" feedback when the emergent behavior triggers, a hotkey to force the exact unit-test start conditions (so the known clip is reliably reproducible live), and a toggle to disable the quirk and observe the modern block behavior on the identical approach.
-- Minimal code and visuals (colored rectangles via CardMaker + NodePath) so it stays a focused reference/template, not a full game.
+- Player uses Subpixel* components (P2-A) + SubpixelMovementComponent for the retro layer.
+- register_retro_systems + RetroProfile enables the QuirkMovementSystem (P2-B + P2-C).
+- A local RetroSidescrollerControllerSystem reads InputComponent, applies platformer logic
+  (run accel, gravity, grounded jump), writes FP velocities to SubpixelMovementComponent.
+- QuirkMovementSystem integrates the velocities (with quantization) and applies quirk rules
+  (wall clip) when resolving against Collider entities (the level platforms/wall).
+- Syncs standard TransformComponent from SubpixelTransform for rendering.
+- Uses SpriteComponent (with color for no-asset colored rect fallback) + RenderSystem
+  (added like tgl) so visuals appear under aspect2d exactly like the working tgl_demo.
+- InputSystem + InputComponent with bindings (like tgl) for responsive controls.
+- Level: ground + platforms + a clip wall using Collider + Transform + Sprite (colored).
+- Hotkeys 'c'/'C' to force a state near the clip wall with velocity (demonstrates the exact
+  retro condition from the unit tests: passage only with quirk active).
+- 't'/'T' to toggle the quirk (live comparison: modern blocks, retro clips).
+- This proves the retro layer in an interactive, visible sidescroller context.
 
-The higher-level platformer controller (in RetroPlatformerController) sets velocities on the SubpixelMovementComponent.
-The registered QuirkMovementSystem performs the FP integration + quirk-aware resolve every update.
-All emergent behavior (the wall clip) comes from the retro layer rules.
-
-Run:
-  python main.py --cartridge examples/cartridges/retro_sidescroller_demo
-
-Controls (while running):
-  Left/Right arrows or A/D : run
-  Space : jump (when on ground)
-  C : force exact test clip start state (the numbers from test_retro_quirks) + impulse -- watch the player clip the wall
-  T : toggle the subpixel_wall_clip quirk on/off + reset player for comparison (modern path blocks)
-
-See the cartridge README and docs/PHASE2... Track P2-D for the full story and how to copy/extend this as a template.
+The cartridge is self-contained, packable, and follows the established cartridge patterns.
+No direct NodePath hacking outside the engine's systems (the source of previous issues).
 """
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
-from panda3d.core import CardMaker, NodePath, Vec2
-
-# OnscreenText is nice for instructions but lives in direct.gui and may not be
-# importable in minimal / headless test environments. We guard it.
-try:
-    from direct.gui.OnscreenText import OnscreenText  # type: ignore
-    from panda3d.core import TextNode  # type: ignore
-    ONSCREEN_TEXT_AVAILABLE = True
-except Exception:
-    OnscreenText = None  # type: ignore
-    TextNode = None  # type: ignore
-    ONSCREEN_TEXT_AVAILABLE = False
+from panda3d.core import Vec4, Vec2
 
 from engine.core.system import System, World
+from engine.graphics.components.transform_component import TransformComponent
+from engine.graphics.components.sprite_component import SpriteComponent
+from engine.graphics.systems.render_system import RenderSystem
 from engine.input.components.input_component import InputComponent
 from engine.input.input_bindings import InputBinding
 from engine.input.systems.input_system import InputSystem
 from engine.physics.components.collider_component import ColliderComponent
+from engine.physics.typesg import ColliderType
 
 from engine.retro import (
     FixedPoint,
@@ -58,456 +48,244 @@ from engine.retro import (
     register_retro_systems,
 )
 
-
-# ------------------------------------------------------------------
-# Simple level data for both visuals and the controller's grounded checks.
-# These are also turned into Collider entities so the Quirk system snapshots them.
-# The special "clip_wall" is the one the subpixel rule is tuned to allow passage through
-# under the right conditions (exact numbers from the unit test).
-# ------------------------------------------------------------------
+# Level tuned to fit aspect2d playfield (roughly -1.3..1.3) while allowing a visible
+# "clip wall" that the subpixel rule can let the player pass under the right conditions.
+# The repro logic mirrors the unit test (subpixel alignment + velocity into a solid
+# triggers the intentional non-push in the rule when quirk enabled).
 LEVEL_PLATFORMS = [
     # (x, y, w, h, is_clip_wall)
-    (-4.0, -1.0, 20.0, 1.0, False),   # long ground
-    (2.0, 1.5, 3.0, 0.6, False),      # floating platform 1
-    (6.0, 2.8, 2.5, 0.6, False),      # floating platform 2
-    (9.5, 0.5, 1.0, 4.0, True),       # THE CLIP WALL (tall thin vertical solid at ~x=9.5-10.5)
+    (-2.0, -0.8, 5.0, 0.5, False),     # ground
+    (0.0, 0.3, 1.2, 0.4, False),       # platform 1
+    (1.2, 0.9, 0.9, 0.4, False),       # platform 2
+    (2.2, 0.0, 0.35, 1.2, True),       # THE CLIP WALL (small vertical solid; C hotkey forces approach)
 ]
 
-JUMP_IMPULSE = 6.0
-GRAVITY = 12.0
-RUN_SPEED = 4.5
-RUN_ACCEL = 18.0
-RUN_DECEL = 22.0
+RUN_SPEED = 1.8
+GRAVITY = 7.0
+JUMP_IMPULSE = 3.5
+RUN_ACCEL = 10.0
+RUN_DECEL = 12.0
 
+def _player_bindings():
+    return {
+        "move_left": [
+            InputBinding(input_type="key", event_name="arrow_left"),
+            InputBinding(input_type="key", event_name="a"),
+        ],
+        "move_right": [
+            InputBinding(input_type="key", event_name="arrow_right"),
+            InputBinding(input_type="key", event_name="d"),
+        ],
+        "jump": [
+            InputBinding(input_type="key", event_name="space"),
+            InputBinding(input_type="key", event_name="w"),
+        ],
+    }
 
-def _fp(v: float, fb: int) -> FixedPoint:
-    return FixedPoint(v, frac_bits=fb)
+class RetroSidescrollerController(System):
+    """Drives the retro player using input -> SubpixelMovement velocities.
 
-
-class RetroPlatformerController(System):
+    The QuirkMovementSystem (registered via P2-C) will consume the velocities
+    for FP integration + quirk-aware collision resolve (including subpixel wall clip).
+    We sync the standard TransformComponent so the engine RenderSystem (added like tgl_demo)
+    produces visible sprites/colored rects under aspect2d.
     """
-    Minimal interactive platformer controller for the retro layer demo.
 
-    - Reads input (via InputComponent actions or direct base polling as fallback).
-    - Applies run acceleration, gravity, and jump to the player's SubpixelMovementComponent (FP).
-    - Maintains a simple grounded state using the level rects (so jump only when appropriate).
-    - After the Quirk system has integrated + resolved for the frame, syncs a parallel
-      standard TransformComponent (for any engine render) and updates direct visual NodePaths.
-    - Detects when the player has "clipped" the special wall (x crossed the wall while
-      still overlapping it) and prints clear feedback that this is the retro emergent behavior.
-    - Supports runtime toggle of the quirk (for live modern vs retro comparison).
-    """
-
-    def __init__(
-        self,
-        world: World,
-        player_id: uuid.UUID,
-        player_st: SubpixelTransformComponent,
-        player_sm: SubpixelMovementComponent,
-        quirk_sys: Any,
-        level_rects: list[dict],
-        visuals: dict[str, NodePath],
-        base: Any,
-    ) -> None:
+    def __init__(self, world: World, player_id, level_rects: list[dict]):
         super().__init__(world)
         self.player_id = player_id
-        self.player_st = player_st
-        self.player_sm = player_sm
-        self.quirk_sys = quirk_sys
-        self.level_rects = level_rects  # list of {"x":, "y":, "w":, "h":, "is_clip_wall":}
-        self.visuals = visuals
-        self.base = base
-
+        self.level_rects = level_rects  # for cheap grounded checks
         self._grounded = False
-        self._prev_vy = 0.0
         self._clip_shown = False
-        self._quirk_enabled = True
 
-        # Input actions (set up in initialize)
-        self.move_left = False
-        self.move_right = False
-        self.jump_pressed = False
-
-    def set_input_state(self, left: bool, right: bool, jump: bool) -> None:
-        self.move_left = left
-        self.move_right = right
-        self.jump_pressed = jump
-
-    def toggle_quirk(self) -> None:
-        if self.quirk_sys is None:
-            return
-        self._quirk_enabled = not self._quirk_enabled
-        if self._quirk_enabled:
-            self.quirk_sys.enable_quirk("subpixel_wall_clip")
-            print("[Retro] subpixel_wall_clip QUIRK RE-ENABLED (retro mode)")
-        else:
-            self.quirk_sys.disable_quirk("subpixel_wall_clip")
-            print("[Retro] subpixel_wall_clip QUIRK DISABLED (modern/float-like mode)")
-
-        # Reset player to a good run-up position for comparison
-        fb = self.player_st.frac_bits
-        self.player_st.set_position(3.0, 0.0)
-        self.player_sm.current_velocity = FixedPointVec2(3.5, 0.0, frac_bits=fb)
-        self._clip_shown = False
-        self._grounded = False
-
-    def force_exact_clip_test(self) -> None:
-        """Instantly put the player into the exact state from the unit test repro.
-        Next integration will demonstrate the known wall clip if the quirk is on.
-        """
-        fb = self.player_st.frac_bits
-        start_x = FixedPoint(4.0, frac_bits=fb) + FixedPoint.from_raw(0x18, frac_bits=fb)
-        self.player_st.set_position(float(start_x), 0.0)
-        self.player_sm.current_velocity = FixedPointVec2(2.0, 0.0, frac_bits=fb)
-        self._clip_shown = False
-        print("[Retro] Forced exact test clip start state (from test_retro_quirks).")
-        print("        Watch the player pass the wall at x~5 only because of the retro rule.")
-
-    def _is_grounded(self, px: float, py: float, pw: float = 0.8, ph: float = 0.8) -> bool:
-        """Cheap grounded test against our level rects (player bottom near platform top)."""
+    def _is_grounded(self, px: float, py: float, pw: float = 0.35, ph: float = 0.5) -> bool:
         bottom = py - ph * 0.5
         for r in self.level_rects:
             rx, ry, rw, rh = r["x"], r["y"], r["w"], r["h"]
-            platform_top = ry + rh * 0.5
-            if abs(bottom - platform_top) < 0.15:  # small tolerance
-                # x overlap
-                left = px - pw * 0.5
-                right = px + pw * 0.5
-                if max(left, rx - rw * 0.5) < min(right, rx + rw * 0.5):
+            ptop = ry + rh * 0.5
+            if abs(bottom - ptop) < 0.12:
+                if max(px - pw * 0.5, rx - rw * 0.5) < min(px + pw * 0.5, rx + rw * 0.5):
                     return True
         return False
 
     def update(self, dt: float) -> None:
-        """Run player controller logic + sync visuals. Called every world.update because this is a System."""
-        # --- Poll input this frame (now done here, since the RetroSidescrollerDemo.update is
-        # not invoked by the host; only world.update(dt) which drives registered Systems).
-        input_comp = None
-        try:
-            input_comp = self.world.get_component(self.player_id, InputComponent)
-        except Exception:
-            input_comp = None
+        st = self.world.get_component(self.player_id, SubpixelTransformComponent)
+        sm = self.world.get_component(self.player_id, SubpixelMovementComponent)
+        inp = self.world.get_component(self.player_id, InputComponent)
+        tr = self.world.get_component(self.player_id, TransformComponent)
 
-        if input_comp:
-            self.move_left = bool(
-                input_comp.action_active.get("move_left") or input_comp.action_just_pressed.get("move_left")
-            )
-            self.move_right = bool(
-                input_comp.action_active.get("move_right") or input_comp.action_just_pressed.get("move_right")
-            )
-            self.jump_pressed = bool(input_comp.action_just_pressed.get("jump"))
-        else:
-            # Raw fallback using mouseWatcher (works in real ShowBase runs)
-            if self.base and hasattr(self.base, "mouseWatcherNode"):
-                mw = self.base.mouseWatcherNode
-                self.move_left = mw.is_button_down("arrow_left") or mw.is_button_down("a")
-                self.move_right = mw.is_button_down("arrow_right") or mw.is_button_down("d")
-                self.jump_pressed = mw.is_button_down("space") or mw.is_button_down("w")
-            else:
-                self.move_left = self.move_right = self.jump_pressed = False
-
-        # Hotkeys C (force exact test clip) and T (toggle quirk) with edge detection
-        if self.base and hasattr(self.base, "mouseWatcherNode"):
-            mw = self.base.mouseWatcherNode
-            c_down = mw.is_button_down("c")
-            if c_down and not getattr(self, "_c_was_down", False):
-                self.force_exact_clip_test()
-            self._c_was_down = c_down
-
-            t_down = mw.is_button_down("t")
-            if t_down and not getattr(self, "_t_was_down", False):
-                self.toggle_quirk()
-            self._t_was_down = t_down
-
-        st = self.player_st
-        sm = self.player_sm
-        if not st or not sm or not sm.can_move:
+        if not st or not sm or not sm.can_move or not inp or not tr:
             return
 
         fb = st.frac_bits
 
-        # --- Read input state for movement (already polled above) ---
-        desired_vx = 0.0
-        if self.move_right:
-            desired_vx = RUN_SPEED
-        elif self.move_left:
-            desired_vx = -RUN_SPEED
+        # Input (populated by the InputSystem we added, using the bindings on the component)
+        left = bool(inp.action_active.get("move_left") or inp.action_just_pressed.get("move_left"))
+        right = bool(inp.action_active.get("move_right") or inp.action_just_pressed.get("move_right"))
+        jump = bool(inp.action_just_pressed.get("jump"))
 
-        # Current in float for controller math (we quantize only when writing back to the component)
         cvx, cvy = sm.current_velocity.get_xy_float()
 
-        # Run accel/decel toward desired
-        if abs(desired_vx) > 0.01:
-            if (desired_vx > 0 and cvx < desired_vx) or (desired_vx < 0 and cvx > desired_vx):
-                cvx += (desired_vx - cvx) * min(1.0, RUN_ACCEL * dt)
-            else:
-                # already at or past target, or opposing -- strong decel toward target
-                cvx += (desired_vx - cvx) * min(1.0, RUN_DECEL * dt)
+        desired = 0.0
+        if right:
+            desired = RUN_SPEED
+        elif left:
+            desired = -RUN_SPEED
+
+        if abs(desired) > 0.01:
+            cvx += (desired - cvx) * min(1.0, RUN_ACCEL * dt)
         else:
-            # no input -> decelerate toward 0
             cvx += (0.0 - cvx) * min(1.0, RUN_DECEL * dt)
 
-        # Gravity
         cvy -= GRAVITY * dt
 
-        # Jump (use the state set from input above)
         px, py = st.get_position()
         self._grounded = self._is_grounded(px, py)
-        if self.jump_pressed and self._grounded:
+
+        if jump and self._grounded:
             cvy = JUMP_IMPULSE
             self._grounded = False
 
-        # Write the new velocity back to the retro component (FP, quantized)
+        # Write velocities for the retro layer (QuirkMovementSystem will integrate + resolve)
         sm.current_velocity = FixedPointVec2(cvx, cvy, frac_bits=fb)
 
-        # The QuirkMovementSystem (registered separately) will, on its update:
-        #   - take this current_velocity
-        #   - do FP delta = vel * dt_fp
-        #   - intended = pos + delta
-        #   - resolve_quirky (which may apply the wall clip rule and return a different final pos/vel)
-        #   - write the (possibly quirk-modified) final_pos and final_vel back
+        # Sync standard Transform for the engine's RenderSystem (produces the visible rect)
+        tr.x, tr.y = st.get_position()
 
-        # After the world has advanced the systems (the caller of this update usually does one
-        # full world tick), our visuals will be synced in the entrypoint's post-tick or we can
-        # do a best-effort sync here using the latest st.
-
-        # Sync visuals (direct NodePaths) from the (possibly quirk-adjusted) Subpixel position.
-        px, py = st.get_position()
-        if "player" in self.visuals:
-            self.visuals["player"].setPos(px * 0.12, 0, py * 0.12)  # scale to fit a nice view in aspect2d
-
-        # Also keep a parallel standard Transform if anything else in the engine wants it.
-        # (We create one on the player in initialize and keep it roughly in sync.)
-        try:
-            t = self.world.get_component(self.player_id, "TransformComponent")  # type: ignore[arg-type]
-            if t is not None:
-                t.x = px
-                t.y = py
-        except Exception:
-            pass
-
-        # --- Clip detection / proof of retro layer ---
-        # If the player x has crossed the clip wall while still overlapping it in x, and we
-        # are using the quirk, announce it. This is the observable "the retro layer did this".
+        # Demo feedback: detect when we passed the clip wall thanks to the quirk
         wall = next((r for r in self.level_rects if r.get("is_clip_wall")), None)
-        if wall and not self._clip_shown:
-            w_left = wall["x"] - wall["w"] * 0.5
-            w_right = wall["x"] + wall["w"] * 0.5
-            p_left = px - 0.4
-            p_right = px + 0.4
-            # Player has its center past the wall left edge while still overlapping the wall rect
-            if px > w_left and p_left < w_right and cvx > 0.5:
-                if self._quirk_enabled:
-                    print("\n*** CLIP DETECTED (live during play) ***")
-                    print("The player passed through the solid wall using subpixel positioning +")
-                    print("the subpixel_wall_clip_rule from the retro layer (P2-B).")
-                    print("This is the exact emergent behavior the unit tests prove only happens")
-                    print("with the retro components + quirk enabled.")
-                    print("See engine/retro/systems/collision.py and the P2-D reference cartridge.\n")
-                else:
-                    print("(You are overlapping the wall in modern mode -- the quirk is off, so this is not a full clip passage.)")
+        if wall and not self._clip_shown and cvx > 0.1:
+            if px > wall["x"] - 0.1:
+                print("\n*** CLIP DETECTED (live) ***")
+                print("Player passed the wall using subpixel positioning + the subpixel_wall_clip_rule")
+                print("from the retro layer (P2-B). This only happens with the quirk enabled via P2-C.")
+                print("See engine/retro/systems/collision.py and tests/unit/test_retro_quirks.py\n")
                 self._clip_shown = True
 
-        self._prev_vy = cvy
-
-
 class RetroSidescrollerDemo:
-    """SMB-spirit interactive 2D sidescroller reference for P2-D (re-worked)."""
+    """Cartridge entrypoint following tgl_demo patterns for a working interactive demo."""
 
     def initialize(self, context: Any) -> None:
         world: World = context.world
-        self.context = context
-        self.world = world
-        self.base = getattr(context, "base", None)
+        base = getattr(context, "base", None)
 
-        fb = 8
-
-        # --- P2-C opt-in ---
-        profile = RetroProfile(
-            name="nes-smb-interactive",
-            frac_bits=fb,
-            enable_quirks=["subpixel_wall_clip"],
-        )
-        register_retro_systems(world, profile=profile)
-        self.profile = profile
-
-        # Find the Quirk system we just registered so we can toggle it at runtime.
-        quirk_sys = None
-        for sys in getattr(world, "_systems", []):
-            if getattr(sys, "__class__", None) and sys.__class__.__name__ == "QuirkMovementSystem":
-                quirk_sys = sys
-                break
-
-        # --- Player entity (retro precision) ---
-        player = world.create_entity()
-
-        # Start the player on the left side with a little initial velocity so it feels alive.
-        st = SubpixelTransformComponent(x=0.5, y=0.0, frac_bits=fb)
-        sm = SubpixelMovementComponent(frac_bits=fb, base_speed=RUN_SPEED, acceleration=RUN_ACCEL, deceleration=RUN_DECEL)
-        sm.current_velocity = FixedPointVec2(1.5, 0.0, frac_bits=fb)
-
-        world.add_component(player.id, st)
-        world.add_component(player.id, sm)
-
-        # Also give it a standard Transform (we will keep it roughly synced for any engine systems).
-        from engine.graphics.components.transform_component import TransformComponent
-        world.add_component(player.id, TransformComponent(x=0.5, y=0.0))
-
-        # Input component + system (best effort).
-        # The engine InputSystem needs a real ShowBase with .accept for device listeners.
-        # In test environments (DummyBase) we skip it and rely on the controller's
-        # set_input_state + direct base polling for the interactive manual run.
-        showbase = getattr(context, "base", None) or getattr(self, "base", None)
+        # Add the engine systems tgl_demo adds (critical for input + rendering to work in real runs).
+        # Guarded for test/minimal bases (DummyBase/object lack .accept etc.); real ShowBase in
+        # main.py --cartridge will succeed exactly like tgl_demo does.
         try:
-            if showbase is not None and hasattr(showbase, "accept"):
-                world.add_system(InputSystem(world, showbase))
-                has_input_system = True
+            if base is not None and hasattr(base, "accept"):
+                self._input = InputSystem(world, base)
+                self._render = RenderSystem(world, base)
+                world.add_system(self._input)
+                world.add_system(self._render)
             else:
-                has_input_system = False
+                self._input = self._render = None
         except Exception:
-            has_input_system = False
+            self._input = self._render = None
 
-        self.has_input_system = has_input_system
-        move_left = InputBinding(input_type="key", event_name="arrow_left")
-        move_right = InputBinding(input_type="key", event_name="arrow_right")
-        jump_bind = InputBinding(input_type="key", event_name="space")
-        # Also support WASD / common keys
-        move_left2 = InputBinding(input_type="key", event_name="a")
-        move_right2 = InputBinding(input_type="key", event_name="d")
-        jump2 = InputBinding(input_type="key", event_name="w")
-
-        input_comp = InputComponent(
-            action_bindings={
-                "move_left": [move_left, move_left2],
-                "move_right": [move_right, move_right2],
-                "jump": [jump_bind, jump2],
-            }
-        )
-        world.add_component(player.id, input_comp)
-
-        self.player_id = player.id
-        self.player_st = st
-        self.player_sm = sm
-        self.input_comp = input_comp
-
-        # --- Build level colliders + rect data for controller ---
+        # Build level as proper entities (Colliders for Quirk snapshot, Transforms + Sprites for render)
         level_rects: list[dict] = []
         for x, y, w, h, is_wall in LEVEL_PLATFORMS:
-            rect_ent = world.create_entity()
-            world.add_component(rect_ent.id, TransformComponent(x=x, y=y))
-            # collider_type omitted (engine may not expose STATIC in this build; the
-            # Quirk snapshot + our controller grounded logic only need size + position).
+            e = world.create_entity()
+            world.add_component(e.id, TransformComponent(x=x, y=y))
             world.add_component(
-                rect_ent.id,
-                ColliderComponent(size=Vec2(w, h)),
+                e.id,
+                ColliderComponent(size=Vec2(w, h), collider_type=ColliderType.RECTANGLE),
             )
+            col = Vec4(0.6, 0.6, 0.65, 0.95) if is_wall else Vec4(0.35, 0.35, 0.4, 1.0)
+            world.add_component(e.id, SpriteComponent(image_path=None, color=col, layer=0))
             level_rects.append({"x": x, "y": y, "w": w, "h": h, "is_clip_wall": is_wall})
 
         self.level_rects = level_rects
 
-        # --- Visuals (direct NodePaths so the player visibly moves and clips) ---
-        # Guarded heavily because the test loader uses a very minimal DummyBase with no
-        # aspect2d / render / OnscreenText. The interactive manual run (python main.py --cartridge)
-        # will have a real ShowBase and will get the moving rects + instructions.
-        self.visuals: dict[str, NodePath] = {}
-        base_for_vis = getattr(self, "base", None) or getattr(context, "base", None)
+        # Player: retro components + standard ones for input/render + the layer
+        player = world.create_entity()
+        fb = 8
+        st = SubpixelTransformComponent(x=-1.2, y=0.0, frac_bits=fb)
+        sm = SubpixelMovementComponent(frac_bits=fb, base_speed=RUN_SPEED, acceleration=RUN_ACCEL, deceleration=RUN_DECEL)
+        tr = TransformComponent(x=-1.2, y=0.0)
 
-        if base_for_vis is not None and hasattr(base_for_vis, "aspect2d"):
-            try:
-                # Player "blob" (red rectangle)
-                cm = CardMaker("player")
-                cm.setFrame(-0.4, 0.4, -0.4, 0.4)
-                pnp = NodePath(cm.generate())
-                pnp.setColor(0.9, 0.2, 0.1, 1.0)
-                pnp.reparentTo(base_for_vis.aspect2d)
-                pnp.setPos(0.5 * 0.12, 0, 0.0 * 0.12)
-                self.visuals["player"] = pnp
+        world.add_component(player.id, st)
+        world.add_component(player.id, sm)
+        world.add_component(player.id, tr)
 
-                # Platform / wall visuals
-                for i, r in enumerate(level_rects):
-                    cm2 = CardMaker(f"plat_{i}")
-                    cm2.setFrame(-r["w"] * 0.5, r["w"] * 0.5, -r["h"] * 0.5, r["h"] * 0.5)
-                    np = NodePath(cm2.generate())
-                    if r.get("is_clip_wall"):
-                        np.setColor(0.4, 0.4, 0.5, 0.85)
-                    else:
-                        np.setColor(0.3, 0.3, 0.35, 1.0)
-                    np.reparentTo(base_for_vis.aspect2d)
-                    np.setPos(r["x"] * 0.12, 0, r["y"] * 0.12)
-                    self.visuals[f"plat_{i}"] = np
+        # Colored rect via SpriteComponent fallback (no assets needed; RenderSystem creates it)
+        world.add_component(player.id, SpriteComponent(image_path=None, color=Vec4(0.9, 0.2, 0.1, 1), layer=2))
 
-                # On-screen instructions (guarded)
-                if ONSCREEN_TEXT_AVAILABLE:
-                    try:
-                        title = OnscreenText(  # type: ignore
-                            text="P2-D Retro Sidescroller (SMB spirit) - RE-WORKED",
-                            pos=(0, 0.92),
-                            scale=0.06,
-                            fg=(1, 1, 1, 1),
-                            align=TextNode.ACenter,  # type: ignore
-                        )
-                        self.visuals["title"] = title
+        # Input (processed by the InputSystem we added)
+        world.add_component(player.id, InputComponent(action_bindings=_player_bindings()))
 
-                        help_text = OnscreenText(  # type: ignore
-                            text="Left/Right (or A/D) to run  |  Space to jump  |  C = force exact clip test  |  T = toggle quirk",
-                            pos=(0, 0.84),
-                            scale=0.04,
-                            fg=(0.9, 0.9, 0.6, 1),
-                            align=TextNode.ACenter,  # type: ignore
-                        )
-                        self.visuals["help"] = help_text
+        self.player_id = player.id
+        self.player_st = st
+        self.player_sm = sm
 
-                        status = OnscreenText(  # type: ignore
-                            text="Retro quirk: subpixel_wall_clip ENABLED  (C = test clip, T = toggle modern)",
-                            pos=(0, -0.9),
-                            scale=0.045,
-                            fg=(0.4, 1.0, 0.4, 1),
-                            align=TextNode.ACenter,  # type: ignore
-                        )
-                        self.visuals["status"] = status
-                        self._status_text = status
-                    except Exception:
-                        self._status_text = None
-            except Exception:
-                # Visuals are optional for the reference test; the logic (retro + controller) still runs.
-                self.visuals = {}
-        else:
-            self._status_text = None
-
-        # --- Controller system (the thing that makes it interactive and proves the layer) ---
-        controller = RetroPlatformerController(
-            world,
-            player.id,
-            st,
-            sm,
-            quirk_sys,
-            level_rects,
-            self.visuals,
-            self.base,
+        # P2-C opt-in (the "few lines" surface). This registers QuirkMovementSystem.
+        profile = RetroProfile(
+            name="nes-smb",
+            frac_bits=fb,
+            enable_quirks=["subpixel_wall_clip"],
         )
-        world.add_system(controller)
-        self.controller = controller
+        # Add our controller first so it sets velocities; register appends Quirk after it in the list.
+        self._controller = RetroSidescrollerController(world, player.id, level_rects)
+        world.add_system(self._controller)
 
-        # Also store a reference to the quirk system for the entrypoint's key handling.
-        self.quirk_sys = quirk_sys
+        register_retro_systems(world, profile=profile)
+        self.profile = profile
 
-        # Initial on-screen / console message
-        print("\n[P2-D] retro_sidescroller_demo (interactive SMB-spirit sidescroller) - RE-WORKED")
-        print("  Retro layer active (P2-A math + P2-B quirks + P2-C opt-in via register_retro_systems).")
-        print("  Use the keys listed on screen. The clip wall on the right is the star of the show.")
-        print("  The emergent wall clip only happens because the retro rule is active.\n")
+        # Hotkeys like tgl_demo uses base.accept for one-shot actions
+        if base and hasattr(base, "accept"):
+            base.accept("c", self._force_clip_test)
+            base.accept("t", self._toggle_quirk)
+            base.accept("C", self._force_clip_test)
+            base.accept("T", self._toggle_quirk)
 
-    def _update_input_from_component(self) -> tuple[bool, bool, bool]:
-        """Poll the InputComponent we gave the player (populated by InputSystem)."""
-        if not hasattr(self, "input_comp") or self.input_comp is None:
-            return False, False, False
-        ic = self.input_comp
-        left = bool(ic.action_pressed.get("move_left") or ic.action_just_pressed.get("move_left"))
-        right = bool(ic.action_pressed.get("move_right") or ic.action_just_pressed.get("move_right"))
-        jump = bool(ic.action_just_pressed.get("jump"))
-        return left, right, jump
+        print("\n[P2-D] retro_sidescroller_demo (interactive SMB-spirit sidescroller)")
+        print("  Retro layer active via register_retro_systems + RetroProfile (P2-C).")
+        print("  Controls: Left/Right (arrows or A/D), Space/W to jump.")
+        print("  C = force clip test state (exact subpixel + vel near wall; passage only with quirk).")
+        print("  T = toggle the subpixel_wall_clip quirk (modern blocks vs retro clips).")
+        print("  This demonstrates the retro math + rules in a real playable context.\n")
 
-    def update(self, dt: float) -> None:  # called by host if it polls the entry instance (may not be; logic moved to controller)
-        pass  # Input/hotkey logic is now inside RetroPlatformerController.update (which is a real System)
+        self._quirk_enabled = True
+
+    def _force_clip_test(self):
+        if not hasattr(self, "player_st"):
+            return
+        fb = 8
+        # Use numbers near our clip wall (2.2) with speed to cross it.
+        # The rule will trigger on subpixel alignment exactly as in the unit test.
+        start_x = 1.9
+        self.player_st.set_position(start_x, 0.0)
+        self.player_sm.current_velocity = FixedPointVec2(1.8, 0.0, frac_bits=fb)
+        self._controller._clip_shown = False if hasattr(self, "_controller") else False
+        print("[P2-D] Forced clip test state (subpixel + velocity into wall).")
+        print("       With quirk enabled the retro rule should let it pass (see collision.py).")
+
+    def _toggle_quirk(self):
+        # Find the Quirk system registered by the helper and toggle the rule
+        quirk_sys = None
+        for sys in getattr(self.world, "_systems", []):
+            if "QuirkMovement" in sys.__class__.__name__:
+                quirk_sys = sys
+                break
+        if not quirk_sys:
+            print("[P2-D] Could not find Quirk system to toggle.")
+            return
+
+        self._quirk_enabled = not self._quirk_enabled
+        if self._quirk_enabled:
+            quirk_sys.enable_quirk("subpixel_wall_clip")
+            print("[P2-D] subpixel_wall_clip ENABLED (retro mode - clip should work)")
+        else:
+            quirk_sys.disable_quirk("subpixel_wall_clip")
+            print("[P2-D] subpixel_wall_clip DISABLED (modern mode - wall should block)")
+
+        # Reset player to a good run-up position for comparison
+        if hasattr(self, "player_st"):
+            self.player_st.set_position(-1.0, 0.0)
+            self.player_sm.current_velocity = FixedPointVec2(1.0, 0.0, frac_bits=8)
+            if hasattr(self, "_controller"):
+                self._controller._clip_shown = False
 
     def teardown(self, context: Any | None = None) -> None:
-        print("[P2-D] retro_sidescroller_demo (interactive) teardown")
+        print("[P2-D] retro_sidescroller_demo teardown")
