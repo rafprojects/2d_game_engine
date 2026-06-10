@@ -1,13 +1,21 @@
 """
 Precision-aware components for the retro layer.
 
-SubpixelTransformComponent is the primary deliverable for P2-A. It stores
-position using FixedPointVec2 while keeping rotation and scale as float
-(consistent with historical emphasis on sub-pixel position/velocity for
-emergent collision and movement quirks).
+SubpixelTransformComponent (P2-A) stores position using FixedPointVec2 while
+keeping rotation and scale as float (consistent with historical emphasis on
+sub-pixel position/velocity for emergent collision and movement quirks).
 
-It is deliberately a *parallel* type to TransformComponent. Cartridges opt
-into it (or copy its rules) rather than the engine forcing it on everyone.
+SubpixelMovementComponent (P2-B) is a minimal velocity holder using
+FixedPointVec2 for current/target velocity. It lets QuirkMovementSystem (and
+cartridge authors) keep all integration and quirk rule math in the fixed-point
+domain.
+
+Both are deliberately *parallel* types to the float equivalents
+(TransformComponent, MovementComponent). Cartridges opt into them (or copy
+their rules) rather than the engine forcing retro constraints on everyone.
+
+See docs/PHASE2_RETRO_EMERGENT_GAMEPLAY_LAYER.md (tracks P2-A and P2-B) and
+the individual classes for usage examples with QuirkMovementSystem.
 """
 
 from __future__ import annotations
@@ -115,4 +123,92 @@ class SubpixelTransformComponent(Component):
             f"SubpixelTransformComponent(x={px:.6f}, y={py:.6f}, "
             f"rotation={self.rotation}, scale=({self.scale_x}, {self.scale_y}), "
             f"frac_bits={self._frac_bits})"
+        )
+
+
+class SubpixelMovementComponent(Component):
+    """
+    Minimal movement state holder using fixed-point for velocity.
+
+    Intended for use with QuirkMovementSystem (P2-B). Stores current and
+    target velocity as FixedPointVec2 so that velocity integration, tentative
+    position deltas, and quirk rules all execute with deterministic
+    quantization in the reference retro layer.
+
+    Acceleration/deceleration and base speed remain float for cartridge
+    ergonomics (they are quantized to the component's frac_bits by the system
+    when producing FP deltas). This keeps the component small while ensuring
+    the "why this emergent behavior" math stays visible in FP.
+
+    It is deliberately parallel to MovementComponent. Cartridges opt in by
+    adding Subpixel* components and registering the retro system.
+
+    Example (cartridge or test):
+        move = SubpixelMovementComponent(base_speed=2.0, frac_bits=8)
+        move.current_velocity = FixedPointVec2(1.25, 0, frac_bits=8)
+    """
+
+    def __init__(
+        self,
+        base_speed: float = 1.0,
+        acceleration: float = 10.0,
+        deceleration: float = 10.0,
+        *,
+        frac_bits: int = 16,
+        current_velocity: FixedPointVec2 | None = None,
+        target_velocity: FixedPointVec2 | None = None,
+    ) -> None:
+        self.base_speed: float = float(base_speed)
+        self.acceleration: float = float(acceleration)
+        self.deceleration: float = float(deceleration)
+        self._frac_bits: int = frac_bits
+
+        if current_velocity is not None:
+            self.current_velocity: FixedPointVec2 = FixedPointVec2(
+                current_velocity, frac_bits=frac_bits
+            )
+        else:
+            self.current_velocity = FixedPointVec2(0, 0, frac_bits=frac_bits)
+
+        if target_velocity is not None:
+            self.target_velocity: FixedPointVec2 = FixedPointVec2(
+                target_velocity, frac_bits=frac_bits
+            )
+        else:
+            self.target_velocity = FixedPointVec2(0, 0, frac_bits=frac_bits)
+
+        self.can_move: bool = True
+        self.is_moving: bool = False
+
+    @property
+    def frac_bits(self) -> int:
+        return self._frac_bits
+
+    # ------------------------------------------------------------------
+    # Velocity (primary retro-precise data)
+    # ------------------------------------------------------------------
+    def get_velocity_fp(self) -> FixedPointVec2:
+        """Return current velocity as FixedPointVec2 (no conversion)."""
+        return self.current_velocity
+
+    def get_velocity(self) -> tuple[float, float]:
+        """Return current velocity as (float, float) for interop/debug."""
+        return self.current_velocity.get_xy_float()
+
+    def set_velocity(self, x: float | int | FixedPoint, y: float | int | FixedPoint) -> None:
+        """Set current velocity, quantizing to the component's frac_bits."""
+        self.current_velocity = FixedPointVec2(x, y, frac_bits=self._frac_bits)
+
+    def set_target_velocity(self, x: float | int | FixedPoint, y: float | int | FixedPoint) -> None:
+        """Set target velocity (for smoothed movement), quantizing."""
+        self.target_velocity = FixedPointVec2(x, y, frac_bits=self._frac_bits)
+
+    # ------------------------------------------------------------------
+    # Convenience
+    # ------------------------------------------------------------------
+    def __repr__(self) -> str:
+        vx, vy = self.current_velocity.get_xy_float()
+        return (
+            f"SubpixelMovementComponent(vel=({vx:.6f}, {vy:.6f}), "
+            f"base_speed={self.base_speed}, frac_bits={self._frac_bits})"
         )
