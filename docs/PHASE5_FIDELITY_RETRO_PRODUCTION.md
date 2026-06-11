@@ -2,18 +2,19 @@
 
 **Status:** Planned  
 **Created:** 2026-06  
-**Last updated:** 2026-06 (initial draft from vision extraction + user choices)
+**Last updated:** 2026-06-10 (viability evaluation pass: three premises corrected — RetroProfile already exists so P5-A composes instead of competing; the NSF player is a mock so P5-C commits to procedural samples; the packer already includes native artifacts so P5-E shrank and split into E1/E2 with E2 gated on a real consumer; P5-B restaged around a real 256×240 render-to-texture pipeline; per-track Risks added — see Implementation Notes)
 
 ### Tracks
 
 | Track | Description | Status | Effort |
 |-------|-------------|--------|--------|
-| P5-A | Core "Fidelity Profile" coordinator system (selectable profiles as first-class objects/enums/dicts; cartridge-scoped at minimum with per-entity/system overrides; manifest + entrypoint declaration + runtime switch support; coordinates retro math (P2), visual effects, audio emulation, and simulation rules to target baselines like "NES/8-bit", "Modern Smooth", "Arcade"; opt-in everywhere; "every new engine feature must be cartridge-usable" principle surface) | Planned | Medium-Large |
-| P5-B | Visual retro effects implementation (initial shader-based or post-process scanlines, CRT curvature/distortion, palette emulation / limited color quantization; delivered as optional render passes or compositing layer; intensity/scanline count/curvature/palette controls; strictly optional — default RenderSystem / modern smooth path must be 100% unaffected) | Planned | Medium |
-| P5-C | Audio chip emulation layers (starting with NES APU-style square/pulse waves, noise, triangle; later SNES SPC etc.; integrate with existing AudioSystem / MusicSystem / NSF player; cartridges that opt in get emulated voices while others continue with samples/MIDI/NSF; small practical API (frequency, duty, volume, envelope); API-level not cycle-accurate) | Planned | Medium |
-| P5-D | Retro layer expansion + profile integration (add well-documented practical approximations for integer overflow effects, specific collision quirks, timing-window behaviors, and other classic console "features"; each with reproducible test/demo scenario + exact rule description in code/docs; opt-in path exclusively via fidelity profile or explicit component/system flag; does not affect non-retro entities/cartridges) | Planned | Small-Medium |
-| P5-E | Native packaging, distribution, richer FFI surfaces & initial security sketch (extend `py2d-cartridge` / cartridge_pack + build story for first-class native artifacts: discover/validate/include .so/.dylib/.dll (and platform subdirs) in .car; optional build hooks + conventional `native/` layout; manifest `native`/`build` section growth; ABI compatibility matrix + engine version enforcement for native plugins; post-v1 richer FFI surfaces (native events on bus, native SaveStateProvider, controlled core component access via handles, native system update callbacks); initial security/provenance/sandboxing model sketch (signing, hash verification, capability restrictions, process isolation notes)) | Planned | Medium-Large |
-| P5-F | Documentation, "cartridge-usable" principle, production packaging example & validation (update cartridge_loader_guide + new/expanded guides for profiles + native packaging; explicit "every new engine feature must be usable from a cartridge without engine modification" checklist + examples; minimal production packaging example (or note in host context) demonstrating native bundle + profile-declaring cartridge; validation track exercising full profiles + packaging on tgl_demo (or dedicated ref cartridge) including the TGL ZIP packaging item as a concrete consumer; initial security notes in docs) | Planned | Small |
+| P5-A | Core "Fidelity Profile" coordinator system (umbrella over the EXISTING `RetroProfile` from P2 — `FidelityProfile` composes optional dimensions `math: RetroProfile`, `video: EffectsConfig`, `audio: ChipConfig`; cartridge-scoped; manifest `fidelity` key + Context declaration + runtime switch; baselines "NES/8-bit", "Modern Smooth", "Arcade" as presets; opt-in everywhere; compose, don't compete) | Planned | Medium |
+| P5-B | Visual retro effects, staged (B0: WSLg render-to-texture spike FIRST; B1: CardMaker scanline overlay — hours, no RTT, permanent fallback; B2 headline: render the game into a real 256×240 offscreen buffer matching P2's VirtualPlayfield + nearest-neighbor upscale — authentic pixelation by construction; B3: GLSL on the upscale quad for scanlines/curvature/palette — palette REQUIRES a shader pass; strictly optional, default path 100% unaffected) | Planned | Medium-Large (staged) |
+| P5-C | Audio chip voices via procedurally generated samples (corrected premise: the "NSF player" is a MOCK — API skeleton, zero synthesis; real backend is Panda3D AudioSound sample playback; v1: synthesize square/pulse/triangle/noise samples at load time with stdlib only, play through the existing AudioSystem with `play_rate` for pitch and per-duty samples; the mock's channel API becomes the target surface backed by real voices; API-level, not cycle-accurate) | Planned | Medium |
+| P5-D | Retro layer expansion + profile integration (integer-overflow wrap as a FixedPoint mode — 8.8 wraps at its natural 16-bit width; revive the `momentum_residual` quirk dropped in the P2 rebuild; timing-window behaviors on the tick-callback architecture; each quirk ships with reproducible test/demo + exact rule description; opt-in exclusively via profile or explicit flag) | Planned | Small-Medium |
+| P5-E1 | Native packaging validation, ABI gating & security sketch (the packer ALREADY includes .so/.dylib/.dll via rglob — inclusion is free, validation is the work; pack-time check that declared artifacts exist; conventional `native/` layout — NOT `build/`, which the packer excludes; load-time ABI/engine-version gating with actionable errors; add the `py2d-cartridge` console script via `[project.scripts]` — the name the docs already use but which does not exist; docs-only security/provenance sketch anchored on P3's trust-model note) | Planned | Small-Medium |
+| P5-E2 | Richer FFI surfaces — GATED, not scheduled (native events on the bus, native SaveStateProvider, batched component accessors — per-field handle access is slower than Python, see the P3 evaluation; every addition versioned + exercised from a hello example; **gate: do not start until at least one real non-toy native plugin exists and wants the surface**; per-frame native callbacks removed from the list — already in P3's v1 vtable) | Planned | Medium (deferred) |
+| P5-F | Documentation, "cartridge-usable" principle, production packaging example & validation (update cartridge_loader_guide + guides for profiles + native packaging; the cartridge-usable checklist + enforcement example; TGL ZIP packaging item #10 as the concrete consumer; profile-exercising ref cartridge or tgl_demo smoke; security notes; `py2d-cartridge` console script documented) | Planned | Small |
 
 ---
 
@@ -21,7 +22,7 @@
 
 Briefly explain why this phase exists now.
 
-1. After Phase 4 (Isolation & Multi-Cartridge Host Readiness) the architecture has a clean load/unload seam and a proven secondary "host" mental model. The two largest bodies of work that were deliberately offloaded from earlier focused phases (P2 retro math layer and P3 narrow native boundary) are now the highest-leverage remaining surfaces for the original vision: deliberate creative constraints (fidelity profiles + retro authenticity) and production/ecosystem readiness (native packaging + richer FFI + initial security thinking). The AUDIT explicitly calls out the "Ongoing Principles" bucket ("Every new engine feature ... must be usable from a cartridge without engine modification") as the perpetual north star; formalizing the coordinator (profiles) + effects + packaging makes that principle concrete and enforceable rather than aspirational.
+1. After Phase 4 (Isolation & Multi-Cartridge Host Readiness) the architecture has a clean load/unload seam and a proven secondary "host" mental model. The two largest bodies of work that were deliberately offloaded from earlier focused phases (P2 retro math layer and P3 narrow native boundary) are now the highest-leverage remaining surfaces for the original vision: deliberate creative constraints (fidelity profiles + retro authenticity) and production/ecosystem readiness (native packaging + richer FFI + initial security thinking). The AUDIT explicitly calls out the "Ongoing Principles" bucket ("Every new engine feature ... must be usable from a cartridge without engine modification") as the perpetual north star; formalizing the coordinator (profiles) + effects + packaging makes that principle concrete and enforceable rather than aspirational. **Honesty note (2026-06-10 evaluation):** this phase bundles two unrelated workstreams. Tracks A–D depend only on Phase 2, which is complete — they can begin immediately, before or in parallel with P3/P4, and they are the part that serves the game-first thesis (visible scanlines and audible chiptunes are cartridge-#1 payoff). Only E1/E2 depend on the native phases, and E2 is additionally gated on a real native consumer existing. The bundling rationale below is queue hygiene, not an engineering dependency.
 
 2. These items belong together as one phase because they form the "authenticity + production ecosystem" slice: the Fidelity Profile system is the unifying coordinator that makes P2's retro layer, visual effects, and audio emulation first-class and cartridge-declarable; the packaging + richer FFI + security sketch complete the native story that began with P3's narrow v1 boundary; the docs + validation + "cartridge-usable" enforcement close the loop so the principle is not just stated but demonstrated (including a concrete TGL packaging consumer and a ref cartridge exercising profiles end-to-end). Bundling them prevents the offloaded FUTURE items from languishing as an ever-growing queue.
 
@@ -39,41 +40,52 @@ Briefly explain why this phase exists now.
 
 ## Execution Priority
 
-1. P5-A - Core Fidelity Profile coordinator. Everything else (visual effects, audio, retro expansion, integration points, manifest/entrypoint support, "cartridge-usable" surface) depends on having a working, selectable, cartridge-scoped profile mechanism first.
+*(Resequenced 2026-06-10: A–D depend only on the completed Phase 2 and can begin immediately; E1 follows P3; E2 is gated on evidence, not calendar.)*
 
-2. P5-B - Visual retro effects. High user-visible authenticity payoff; can be developed against the coordinator once P5-A exists.
+1. P5-B0 spike (inside P5-B) - a ~20-line `make_texture_buffer` + trivial GLSL smoke under WSLg, run FIRST. It retires the one platform unknown that decides whether B2/B3 are dev-machine work or wait for verified hardware.
 
-3. P5-C - Audio chip emulation. Pairs naturally with visual effects for "NES/8-bit" profile demonstrations; integrates with existing audio systems.
+2. P5-A - Fidelity Profile umbrella over RetroProfile. The coordinator everything else hangs on; Medium once it composes rather than competes.
 
-4. P5-D - Retro layer expansion + profile integration. Completes the creative constraint story started in P2; each added quirk must ship with test/demo + documentation + profile opt-in.
+3. P5-B - Visual effects in stages (B1 overlay → B2 256×240 RTT upscale → B3 shaders). B2 is the headline payoff and unifies P2's virtual pixel space with the visual fidelity story.
 
-5. P5-E - Native packaging + distribution + richer FFI + initial security sketch. Completes the production side of the native story (P3 v1 + P4 isolation); packaging must work before richer FFI surfaces see heavy use; security sketch provides the starting point for ecosystem concerns.
+4. P5-C - Chip voices via procedural samples through the existing AudioSystem. Pairs with B for the "NES/8-bit" demonstration.
 
-6. P5-F - Documentation, cartridge-usable principle, production packaging example & validation. Makes the phase usable and the ongoing principle real (checklist + examples + concrete tgl/ref cartridge packaging + profile exercise smoke). Closes the phase.
+5. P5-D - Retro quirk expansion (overflow wrap, momentum_residual revival, timing windows), each profile-gated with a reproducible demo.
+
+6. P5-E1 - Native packaging validation + ABI gating + security sketch. Sequenced after P3 lands; small because artifact inclusion already works.
+
+7. P5-E2 - Richer FFI. Explicitly gated on a real non-toy native consumer existing; not started on schedule.
+
+8. P5-F - Docs, cartridge-usable checklist, TGL packaging consumer, validation smoke. Closes the phase.
 
 ## Track P5-A - Core Fidelity Profile Coordinator System
 
 ### Problem
 
-The cartridge vision's novel creative thesis ("deliberately opt into constrained simulation rules ... that produce emergent 'NES-style' gameplay side-effects") and the AUDIT's Ongoing principle both require a unifying, cartridge-author-friendly mechanism to select and activate coordinated behaviors across math precision, rendering style, audio, and simulation rules.
+*(Premise corrected 2026-06-10.)* The cartridge vision's novel creative thesis ("deliberately opt into constrained simulation rules ... that produce emergent 'NES-style' gameplay side-effects") and the AUDIT's Ongoing principle both require a unifying, cartridge-author-friendly mechanism to select and activate coordinated behaviors across math precision, rendering style, audio, and simulation rules.
 
-After P2 delivered the core retro math/quirk reference layer (`engine/retro/`), there is still no standard "fidelity profile", "precision mode", or "opt-in" surface. Cartridges have no declarative way (manifest or entrypoint) to say "run me under NES/8-bit rules + visuals + sound." Visual effects, audio emulation, and additional glitches were explicitly scoped out of P2 (and captured in FUTURE) precisely because the coordinator did not exist yet.
+The original draft claimed "there is still no standard 'fidelity profile' ... or 'opt-in' surface." Stale: `engine/retro/profile.py` defines `RetroProfile(name, frac_bits, tick_hz, enable_quirks, options)` — exactly that surface for the math/simulation dimension, built in P2 and load-bearing in retro_sidescroller_demo today. What does not exist is the coordinator **across** dimensions: nothing ties retro math to visual effects and audio voices, and there is no declarative manifest surface ("run me under NES/8-bit rules + visuals + sound"). A P5-A that introduced a competing profile object would leave authors asking "which profile do I declare?"
 
-Without the profile system, retro math remains an isolated curiosity, effects and audio emulation have no consistent activation story, and the "every new engine feature must be cartridge-usable" principle has no hook to hang on.
+Without the umbrella, retro math remains an isolated dimension, effects and audio emulation have no consistent activation story, and the "every new engine feature must be cartridge-usable" principle has no hook to hang on.
 
 ### Fix
 
-Design and implement a small, first-class `FidelityProfile` (or `engine/fidelity/` package) concept:
+Compose, don't compete: `FidelityProfile` (new `engine/fidelity/`) is an umbrella dataclass over optional per-dimension configs —
 
-- Profiles are selectable configuration objects / enums / simple dicts (or a small dataclass with well-known keys + extension points).
-- Core dimensions at minimum: math precision (reference to P2 retro layer), visual style (effects pass/compositing), audio (chip emulation voices), simulation rules (quirk injector flags).
-- Cartridge-scoped at minimum; possible per-entity or per-system overrides where it makes sense.
-- Declarative surface: cartridge manifest can declare a default profile; entrypoint / `initialize` (via CartridgeContext) can set or switch it; runtime switch API for cartridges that want dynamic mode changes (e.g. TGL corridor vs. labyrinth).
-- Opt-in contract: all participating systems/components read the active profile (or a derived "precision mode" / "effects enabled" flag) and degrade gracefully when absent (default = modern smooth / full float / no effects).
-- The retro math layer from P2 participates as one explicit dimension.
-- New engine features (systems, components, render passes, audio voices) are required to be profile-aware or at minimum profile-neutral from day one (enforcement via the P5-F checklist and review).
+- `math: RetroProfile | None` — the existing P2 object, unchanged; the umbrella holds it, never mirrors its fields.
+- `video: EffectsConfig | None` — P5-B's controls (stage, intensity, scanline count, curvature, palette levels).
+- `audio: ChipConfig | None` — P5-C's voice configuration.
+- Simulation-rule flags only where they don't already belong to `RetroProfile.enable_quirks`.
 
-Update `CartridgeManifest` + schema lightly if needed for the declarative default. Wire the active profile into World / a small FidelityManager or via the existing event bus so interested systems can react.
+Canonical baselines ("NES/8-bit", "Modern Smooth", "Arcade") are presets/constructors producing filled-in umbrellas. Declarative surface: a manifest `fidelity` key for the default; CartridgeContext set/switch at initialize or runtime (e.g. TGL corridor vs. labyrinth). Each dimension activates its subsystem exactly the way it does today (`register_retro_systems(profile=...)` for math) — the umbrella coordinates, it does not reimplement. Absent dimensions mean the modern default; absent umbrella means everything behaves exactly as before.
+
+Update `CartridgeManifest` + schema lightly for the declarative default. Wire the active profile through CartridgeContext (and optionally the event bus) so interested systems can react. New engine features must be profile-aware or profile-neutral from day one (enforced via the P5-F checklist).
+
+### Risks
+
+- **Dual-profile confusion** is the one design sin to avoid: a second object overlapping `RetroProfile`'s fields. The umbrella *holds* a RetroProfile; review explicitly for field mirroring.
+- **Migration churn**: retro_sidescroller_demo and its tests must declare through the umbrella with zero behavior change (the same RetroProfile inside).
+- **Premature override granularity**: implement only the cartridge-scoped case until a real need appears — per-entity/per-system profile mixing multiplies the test surface for no current consumer.
 
 ### Acceptance criteria
 
@@ -97,22 +109,26 @@ Update `CartridgeManifest` + schema lightly if needed for the declarative defaul
 
 The FUTURE "Visual Retro Effects & Fidelity Profiles" item (offloaded from P2) and the broader authenticity vision call for optional scanlines, CRT curvature/distortion, palette emulation / limited color quantization, etc.
 
-Currently the engine has none of this. Adding effects directly into the main RenderSystem would violate the "strictly optional — modern smooth rendering ... must be completely unaffected" requirement repeated in the FUTURE text.
+Verified 2026-06-10: the engine has **zero** shader, FilterManager, or offscreen-buffer code anywhere, and sprites render in **aspect2d** — which Panda3D's stock post-processing (FilterManager/CommonFilters) does not cover by default; post-processing 2D content requires rendering it into an offscreen buffer first. Adding effects directly into the main RenderSystem would violate the "strictly optional" requirement.
 
-Without a delivery mechanism (render passes or compositing layer) + controls + profile integration, the visual half of "NES/8-bit" profiles cannot exist.
+That render-to-texture "requirement" is actually the prize: P2 built a 256×240 `VirtualPlayfield`, and rendering the game into a REAL 256×240 buffer makes the virtual pixel space literal — authentic pixelation by construction, not simulated on a high-res render.
 
 ### Fix
 
-Implement the effects as an optional, self-contained layer:
+Three stages, each independently shippable, all off by default and activated via the P5-A `video` dimension (or explicit API), with a dev-mode debug toggle:
 
-- New module(s) under `engine/graphics/` or `engine/fidelity/effects/` (post-process or CardMaker-based overlay quads for initial simplicity; shader path when Panda3D pipeline allows).
-- Effects are off by default; enabled only when the active FidelityProfile requests them (or explicit opt-in).
-- Public controls: intensity, scanline count, curvature amount, palette reduction levels (simple API or config object).
-- Compositing happens after (or around) the main 2D scene so aspect2d sprites, HUD, etc. are affected consistently; or per-layer if needed.
-- Zero changes to default RenderSystem path or any cartridge that does not opt in.
-- Wire activation from the P5-A profile coordinator.
+- **B0 — the spike, run first**: ~20 lines proving `base.win.make_texture_buffer` + a trivial GLSL shader work under WSLg on this machine. Decides everything below.
+- **B1 — scanline overlay** (hours): a CardMaker quad over the scene with an alpha-striped texture. No RTT, no shaders; the cheap first visible win and the permanent fallback if B0 fails.
+- **B2 — the headline: 256×240 render-to-texture + nearest-neighbor upscale.** Render game content into an offscreen buffer at exactly the VirtualPlayfield's dimensions, display it on a fullscreen quad with nearest filtering. Sprites cannot be sub-pixel-smooth because the framebuffer is genuinely 256×240 — the retro look stops being an effect and becomes the actual pipeline. This unifies P2's virtual pixel space with the visual fidelity story.
+- **B3 — GLSL on the upscale quad**: scanlines-in-shader, CRT curvature (UV distortion), palette quantization — which REQUIRES a shader pass and cannot be done with overlays. Controls: intensity, scanline count, curvature amount, palette levels.
 
-Provide a small debug key or console toggle during dev (guarded by dev_mode) to force effects on for inspection.
+Zero changes to the default RenderSystem path or any cartridge that does not opt in.
+
+### Risks
+
+- **WSLg/driver support is the gating unknown**: offscreen buffers + GLSL under WSLg (llvmpipe or GPU passthrough) are unverified on this machine. B0 retires this in an hour; if it fails, B1 ships alone and B2/B3 wait for verified hardware. Panda3D 1.10.16 supports the APIs themselves.
+- **Coordinate-space migration**: B2 changes where sprites render (the buffer's own 2D scene instead of the window's aspect2d). `VirtualPlayfield`'s mapping was built for aspect2d; the buffer path needs an equivalent mapping, and the demos must opt in without breaking the non-profile path.
+- **Playfield vs overlay split**: anything that should stay crisp (debug overlays, future HUD text) must render OUTSIDE the 256×240 buffer — the design needs a two-layer split from day one or text becomes unreadable mush.
 
 ### Acceptance criteria
 
@@ -132,23 +148,28 @@ Provide a small debug key or console toggle during dev (guarded by dev_mode) to 
 
 ### Problem
 
-Authentic retro sound is part of the "Fidelity Profiles & Retro Authenticity" FUTURE item and the original TGL vision (NSF + chiptune SFX).
+*(Premise corrected 2026-06-10.)* Authentic retro sound is part of the "Fidelity Profiles & Retro Authenticity" FUTURE item and the original TGL vision (NSF + chiptune SFX).
 
-The engine already has `AudioSystem`, `MusicSystem`, and NSF player support. There is no optional layer that can drive NES APU-style square/pulse, noise, triangle voices (or later chips) from a simple frequency/duty/volume/envelope API so that cartridge authors can get "chip" timbre without shipping samples or relying solely on NSF.
+The original draft claimed "the engine already has ... NSF player support." Structurally true, sonically false: `engine/audio/nsf_player.py` is built around `MockNSFLibrary` ("for demonstration purposes") — the right API shape (channels, duty, volume, envelope, mute) with **zero synthesis; no sound comes out**. The real audio path is ~800 lines of Panda3D `AudioSound` sample playback (AudioSystem, MusicSystem, audio_manager) with no streaming-synthesis capability at all.
 
-Without this, "NES/8-bit" profiles are visually retro but sonically modern or NSF-only.
+The audio story is therefore further from done than the draft implied — but the mock's channel API is a good target surface, and the sample-playback backend points directly at the right v1 design.
 
 ### Fix
 
-Add an optional emulation layer (new `engine/audio/chip_emulation.py` or submodule):
+**Procedurally generated samples, not real-time synthesis** (new `engine/audio/chip_voices.py` or submodule):
 
-- Small set of emulated voices (start with NES APU square/pulse + noise + triangle).
-- Clean integration: the voices can be driven from cartridge code or from the MusicSystem/NSF path when a profile requests chip mode; normal cartridges continue to use existing sample/MIDI/NSF paths with zero change.
-- Practical API surface: `set_frequency(voice, hz)`, `set_duty(voice, 0.0-1.0)`, `set_volume`, `set_envelope` (or ADSR-lite), `trigger` etc. Not cycle-accurate; API-level approximation sufficient for creative use.
-- Profile-driven: when the active FidelityProfile includes an audio chip dimension, the emulation voices become the active backend for opted-in cartridges; otherwise the prior audio systems are used.
-- Wire with existing audio manager so volume, mixing, and device output are shared.
+- At load time, synthesize short waveform samples with stdlib only (`wave` + math): square/pulse at the standard NES duty cycles (12.5/25/50/75%), triangle, and a noise burst.
+- Play them through the **existing** AudioSystem/AudioSound path: `play_rate` for pitch, per-duty samples for timbre, existing volume/mute/mixing shared for free.
+- API surface as planned (`set_frequency(voice, hz)`, `set_duty`, `set_volume`, envelope-lite, `trigger`) — implemented against the generated-sample backend, and **replacing or backing the mock NSF channel API** so there is one channel model with real sound behind it.
+- Profile-driven via the P5-A `audio` dimension; non-profile cartridges keep existing sample/MIDI paths with zero change.
+- Extension points (SNES SPC, real NSF playback via an external decoder) stay out of v1; the module stays small and self-contained.
 
-Keep the implementation small and self-contained so it can be extended later (SNES SPC etc.) without touching the core audio contract.
+### Risks
+
+- **The real-time synthesis trap**: streaming synthesis in Python (sounddevice/pyaudio callbacks) means a new dependency, GIL-vs-buffer-underrun fights, and a second mixer fighting Panda3D's. The generated-sample approach avoids all of it — do not drift into "just a small callback path" without treating that as a separate, justified track.
+- **Looping artifacts**: clean loops need exact-period samples (generate at frequencies whose period divides the sample length) or short crossfades; cheap to handle, audible if ignored.
+- **Envelope fidelity**: ADSR via per-frame volume stepping on AudioSound is approximate; document it as such (consistent with the API-level, not-cycle-accurate scope).
+- **Expectation management**: this delivers chip *timbre*, not APU emulation — NSF files still do not play. Docs must say so plainly to keep the mock's old implied promise from leaking back in.
 
 ### Acceptance criteria
 
@@ -168,7 +189,7 @@ Keep the implementation small and self-contained so it can be extended later (SN
 
 ### Problem
 
-The P2 phase delivered the core novel part (FixedPointVec2, SubpixelTransform, NESStyleMovementSystem / quirk resolver with intentional clipping/penetration rules, opt-in via fidelity profile or flags, ref cartridges demonstrating one reproducible emergent mechanic).
+The P2 phase delivered the core novel part (FixedPointVec2, the Subpixel Transform/Movement/Collider components, `QuirkMovementSystem` with the midline-ejection resolver, opt-in via `RetroProfile`, and retro_sidescroller_demo demonstrating one genuinely emergent mechanic — the subpixel wall clip).
 
 The FUTURE "Additional Legacy Math & Glitch Priorities" item (offloaded from P2) calls for expanding that layer with more well-documented practical approximations (integer overflow effects, specific collision quirks, timing-window behaviors, other classic console "features").
 
@@ -178,7 +199,7 @@ Without the expansion + explicit tying to the P5-A profile coordinator, the retr
 
 In `engine/retro/` (or a `quirks/` subpackage):
 
-- Add 2–4 additional well-chosen, high-memorable quirks (examples from FUTURE: integer overflow wrap on position/velocity accumulators, specific wall-clip or momentum quirks, narrow timing windows for jumps/attacks, subpixel penetration rules beyond the P2 baseline).
+- Add 2–4 additional well-chosen, high-memorable quirks. Concrete first candidates, grounded in the current code (2026-06-10): **integer-overflow wrap as a FixedPoint mode** (8.8 wraps at its natural 16-bit width — position/velocity accumulator wraparound exactly like the hardware); **revival of the `momentum_residual` quirk** that was deleted in the P2 rebuild and recorded as follow-on; **narrow timing windows** for jumps/attacks built on the tick-callback architecture.
 - For each: a reproducible test or demo scenario (unit test + a tiny cartridge or example script that triggers the exact condition).
 - Clear rationale + exact rule description in code comments and docs (so authors understand the preconditions under which the emergent behavior fires).
 - Opt-in exclusively through the fidelity profile (or an explicit component/system flag that profiles set); non-profile / modern paths are completely unaffected.
@@ -187,6 +208,11 @@ In `engine/retro/` (or a `quirks/` subpackage):
 Prioritize behaviors that enabled memorable gameplay, speedruns, or creative mechanics in historical titles.
 
 All additions remain "practical, API-level approximations (not bit/cycle-accurate full hardware emulation)" per the original scoping.
+
+### Risks
+
+- **Determinism keystone**: every new quirk must stay inside the fixed-tick, raw-integer world — a quirk implemented with float math or frame-time would silently break the deterministic keystone P2 established. The P2 test pattern (worked raw-integer arithmetic pinned in unit tests) is the bar for each addition.
+- **Quirk creep**: each quirk multiplies interaction surface with the axis resolver. Cap the track at the stated 2–4 and require the reproducible demo per quirk before merging the next.
 
 ### Acceptance criteria
 
@@ -202,63 +228,75 @@ All additions remain "practical, API-level approximations (not bit/cycle-accurat
 - Docs (in the retro guide or P5-F material) contain the exact rule text + preconditions.
 - No behavior change for any existing non-retro code.
 
-## Track P5-E - Native Packaging, Distribution, Richer FFI Surfaces & Initial Security Sketch
+## Track P5-E1 - Native Packaging Validation, ABI Gating & Security Sketch
+
+*(Split 2026-06-10 from the original P5-E; packaging turns out to be much smaller than drafted.)*
 
 ### Problem
 
-P3 delivered the narrow v1 native boundary (CartridgeContext as target, minimal ABI, manifest plugins section, thin PluginHost, bidirectional toy "hello" skeleton (C + Rust), guide).
+P3 (when it lands) gives cartridges a declared native plugin and a host that loads it from a directory tree. The production gap is the .car story — but it is narrower than the original draft claimed: **the packer already includes native artifacts.** `package_cartridge` walks `rglob("*")` and its exclude lists (`__pycache__`/`.git`/etc directories, `.DS_Store`, `.pyc`/`.pyo` suffixes) do not filter `.so`/`.dylib`/`.dll`. Inclusion is free; what is missing is validation, convention, and gating. One verified trap: the packer excludes any directory named **`build`** — a native layout using `build/` for artifacts gets silently dropped from the .car.
 
-P4 delivered unload/isolation so native handles can be released cleanly.
-
-The FUTURE "Packaging, Distribution, Tooling & Production Concerns for Native Plugins" and "Richer Native FFI Surfaces (post-v1)" items (offloaded from P3) plus the security/provenance bullet remain unaddressed.
-
-Without packaging support, a cartridge that declares a native plugin cannot be turned into a self-contained .car that includes the .so/.dylib/.dll. Without richer surfaces, native code is limited to the toy registration path. Without even an initial security sketch, the ecosystem story for untrusted third-party cartridges and native plugins is missing its starting point.
+Also: the docs refer to a `py2d-cartridge` CLI that does not exist — pyproject.toml has no `[project.scripts]`; the real entry point is `tools/cli/cartridge_pack.py`.
 
 ### Fix
 
-**Packaging & distribution (core of this track):**
+- **Pack-time validation**: when the manifest declares `native_plugins` (P3-C), verify each declared artifact exists in the tree and lands in the archive; clear error if missing; warn if a declared path sits under an excluded directory name.
+- **Convention**: `native/` (optionally `native/<platform>/`, e.g. `native/linux-x86_64/`) as the documented layout — explicitly NOT `build/`. Single-platform v1; per-platform manifest path maps stay deferred (consistent with P3-C).
+- **Load-time gating**: the P3 host already checks `engine_plugin_abi_version()` before register; add `cartridge.requires.engine` cross-checks with actionable errors ("built against ABI v2; this engine provides v1").
+- **Build hooks deferred**: document "build before pack" (`cargo build`, copy into `native/`) rather than driving builds from the packer in v1.
+- **`[project.scripts]`**: add the `py2d-cartridge` console script mapping to the existing CLI so the name the docs already use becomes real.
+- **Security / provenance sketch (docs only)**: signing and hash verification at load = *provenance*; capability restrictions via the vtable = *containment surface*; process isolation = the only real sandbox. Anchored on P3's trust-model note: native and Python cartridges are the same arbitrary-code-execution trust level, so signing changes who you trust, not what code can do. Lives in the native plugins guide (P5-F); no implementation claimed.
 
-- Extend `tools/cli/cartridge_pack.py` (and the `py2d-cartridge` surface) to treat native artifacts as first-class:
-  - During pack: discover declared native artifacts (from manifest `plugins` / new `native` section), validate their presence, include them (and platform-specific subdirs) inside the resulting .car.
-  - Support optional build hooks or a conventional `native/` layout inside the cartridge tree so `cargo build` / `make` can be driven as part of the pack step (or documented pre-pack).
-  - Manifest may grow a `native` / `build` section describing how to produce the artifacts for supported platforms.
-- Loader (or the P3 PluginHost) consumes the packaged natives on extract.
-- ABI compatibility matrix + engine version enforcement: the already-parsed `cartridge.requires.engine` (plus a new or extended `abi_version` on the plugin entry) should gate loading with clear errors: "native plugin built against engine 0.4 ABI v2 will not load under engine 0.3...".
-- Keep all of this strictly additive: pure-Python cartridges and the default engine paths are never impacted.
+### Risks
 
-**Richer FFI surfaces (post-v1, controlled & versioned):**
-
-- Expand the narrow v1 surface with additional opt-in operations once the basic contract is stable (per FUTURE list):
-  - Native code publishing events onto the world event bus (safe payload types only).
-  - Native-implemented `SaveStateProvider` registration.
-  - Controlled component data access/mutation for a pre-declared set of core component types (Transform, Collider, Sprite, ...) via opaque handles or generated accessors.
-  - Native system update callbacks that the engine can drive each frame (instead of only one-time registration).
-- Every addition must be versioned (ABI bump rules), documented in the header + Rust bindings + native guide, exercised from a "hello"-style example, and noted as additive.
-- Full cross-language component & system type registration is acknowledged as significantly larger; design only after real usage of the narrower surfaces; consider bindgen + stubs or capability-passing.
-
-**Initial security / provenance / sandboxing model sketch:**
-
-- Document a starting point (not a full implementation): plugin signing, hash verification at load time, capability restrictions on what a native plugin may do via the handle, longer-term process isolation notes.
-- Note that these are ecosystem-level concerns that become relevant only after the core boundary (P3), isolation (P4), and at least one real non-toy native plugin exist.
-- Place the sketch in the native plugins guide (P5-F) and reference it from the PHASE5 doc.
-
-All native work beyond the v1 narrow boundary defined in P3 must remain strictly additive.
+- **Stale-artifact confusion**: nothing ties the packed .so to the source it was built from; a forgotten rebuild ships old native code silently. Mitigation: pack-time warning when the artifact is older than the newest source file under `native/`.
+- **Premature ABI promises**: P3's v1 ABI is explicitly experimental; the original draft's "compatibility matrix" language implies a stability that does not exist yet. Gate on exact-version match until the ABI is declared stable.
 
 ### Acceptance criteria
 
-- A cartridge tree with a declared native plugin + the compiled artifact can be packed with `py2d-cartridge .` and the resulting .car contains the native bits in the expected location.
-- Loading the packaged .car causes the native plugin to be discovered, loaded, and registered (ABI/engine version checks pass on a matching build).
-- A richer surface addition (e.g. native event publish or a controlled Transform handle write) can be exercised from an updated "hello" style example and observed from the Python side.
-- The initial security sketch exists in docs and is referenced from the guide and this PHASE5 doc.
-- Pure-Python cartridges and default paths are completely unaffected (no new cost or behavior).
+- A cartridge tree with a declared native plugin + compiled artifact packs successfully and the .car contains the artifact at the conventional path; a missing declared artifact fails the pack with a clear error.
+- Loading the packaged .car discovers and loads the native plugin with ABI/engine checks (against the P3 host).
+- `py2d-cartridge` works as an installed console script.
+- The security sketch exists in the native guide and is referenced from this doc.
+- Pure-Python cartridges and default paths are completely unaffected.
 
 ### Validation
 
-- End-to-end smoke: minimal cartridge declaring a (stub or real) native plugin → `py2d-cartridge` pack → inspect .car contents → load via main or host → native registers and exercises one richer surface (if implemented) or the v1 path.
-- Packer and loader tests cover the new native artifact discovery/validation/bundling paths (and error cases: missing artifact, wrong ABI).
-- Manual on dev platform: follow the (updated) guide, build a native artifact, pack, run, observe.
-- Security sketch is a readable section in the guide; no claim of full implementation.
-- Existing cartridge/pack tests continue to pass for non-native cases.
+- Packer tests: declared-artifact present / missing / under-excluded-dir cases; .car content inspection.
+- End-to-end: pack the P3 test cartridge with its C test plugin → load from .car → hello observed.
+- Existing pack/loader tests pass unchanged for non-native cartridges.
+
+## Track P5-E2 - Richer FFI Surfaces (gated)
+
+*(Split 2026-06-10 from the original P5-E. **Gate: do not start until at least one real, non-toy native plugin exists and concretely wants a listed surface.** The gate is evidence, not calendar — the same "design only after real usage" rule the original draft applied to full cross-language ECS, applied consistently to the whole list.)*
+
+### Problem
+
+P3's v1 surface is deliberately tiny (log, tick-callback registration, one batched query). Real native plugins will eventually want more. Expanding before any real consumer exists is the classic premature-abstraction trap and burns ABI-evolution budget on guesses.
+
+### Fix
+
+When the gate is met, expand opt-in and versioned, in demand order — the original draft's candidates, corrected against the restructured P3:
+
+- Native code publishing events onto the world event bus (safe scalar/string payloads only).
+- Native-implemented `SaveStateProvider` registration (byte-buffer snapshots across the boundary).
+- Controlled component data access for a pre-declared set of core components — **batched accessors only** (fill/write caller-provided buffers): per-field handle access costs more than a Python attribute access against the dict-of-Python-objects World (see the P3 evaluation).
+- *(Removed: "native system update callbacks driven each frame" — already in P3's v1 vtable as tick-callback registration; not a P5 item.)*
+
+Every addition: ABI bump per the versioning rules, header + Rust bindings + guide updated, exercised from a hello-style example. Full cross-language component & system type registration remains out (significantly larger; design only after real usage of these narrower surfaces).
+
+### Risks
+
+- **ABI lock-in**: every surface added is frozen by compatibility promises once the ABI is declared stable; adding late is cheap, removing is impossible. The evidence gate is the mitigation.
+- **Performance theater**: component accessors that are not batched would be slower than pure Python while looking "native fast"; the batched-only rule is load-bearing, not stylistic.
+
+### Acceptance criteria
+
+- (At gate time) the requesting plugin's use case is documented; the chosen surface lands versioned with a working example; the v1-only path continues to work for plugins that ignore it.
+
+### Validation
+
+- Updated hello exercises the new surface; ABI version checks reject mismatched builds; existing native tests pass.
 
 ## Track P5-F - Documentation, "Cartridge-Usable" Principle, Production Packaging Example & Validation
 
@@ -276,7 +314,7 @@ The "Ongoing" principle from the AUDIT ("Every new engine feature ... must be us
 - Create or expand a focused guide (e.g. `docs/guides/fidelity_profiles.md` or augment the native plugins guide) that:
   - Explains the mental model (profiles as the unifying creative + authenticity control surface).
   - Walks through "declare a profile, opt into effects + chip audio, switch at runtime".
-  - Documents the packaging story for natives (layout, pack step, manifest, loader consumption).
+  - Documents the packaging story for natives (the `native/` layout convention — not `build/`, which the packer excludes; pack step via the new `py2d-cartridge` console script; manifest declaration; loader consumption; the E1 security sketch).
   - Includes the initial security sketch.
   - Contains or points to a minimal end-to-end production packaging example (or host-context smoke) and the validation cartridge/ref.
 - Add a living "Cartridge-Usable Principle" section (or short doc) with a checklist: new systems/components/render/audio features must expose their cartridge surface (Context, profile hook, or explicit opt-in) without requiring engine changes; examples of recent features that followed the rule; how to test from a cartridge.
@@ -328,6 +366,7 @@ List items that were surfaced but intentionally left out of this phase.
 - ResourceManager, World event hooks, the existing audio systems, RenderSystem base path, and the P3/P4 cartridge/native loader surface are all leveraged as the foundation (no broad rewrites).
 - Keep this document as the executive record. Detailed profile object layout, exact post-process vs. overlay implementation choices, voice API signatures, packer manifest delta, or the precise security capability model can live in the implementation PRs, the new guide(s), or short design notes alongside the code.
 - Update status, last-updated date, and the tracks table as work lands. Move completed track details into the Outcome section when the phase is declared complete. After this phase lands, the "Phase 4+" language in CARTRIDGE_VISION can be updated in a follow-up pass if desired.
+- **2026-06-10 viability evaluation pass** — three premises corrected against the live tree. (1) P5-A: `RetroProfile` already exists (engine/retro/profile.py, load-bearing in retro_sidescroller_demo), so the track was rescoped from "introduce a profile" to "umbrella over RetroProfile" (compose, don't compete; Medium-Large → Medium). (2) P5-C: the "NSF player" is `MockNSFLibrary` — API skeleton, zero synthesis; the real backend is ~800 lines of Panda3D AudioSound sample playback — so the track commits to procedurally generated samples through the existing AudioSystem rather than real-time synthesis. (3) P5-E: the packer already includes .so/.dylib/.dll (rglob; excludes don't filter them — verified), so packaging shrank to validation + the `native/` convention (the `build` directory is excluded by the packer — verified trap) + ABI gating; `py2d-cartridge` does not exist as a console script (no `[project.scripts]` in pyproject.toml) and is added in E1. P5-B was restaged around the key design insight: render into a real 256×240 offscreen buffer matching P2's VirtualPlayfield and upscale nearest-neighbor — authentic pixelation by construction — with a WSLg RTT spike (B0) run first because offscreen buffers + GLSL under WSLg are unverified on the dev machine (Panda3D 1.10.16 supports the APIs). P5-D names its first candidates: FixedPoint overflow-wrap mode and revival of the `momentum_residual` quirk dropped in the P2 rebuild. P5-E split into E1 (packaging; follows P3) and E2 (richer FFI; **gated on a real non-toy native consumer existing** — evidence, not calendar; per-frame native callbacks removed from the candidate list because they are already in P3's v1 vtable). Phase-level dependency honesty added to the Rationale: A–D depend only on the completed P2 and can begin immediately; only E1/E2 depend on the native phases. Per-track Risks subsections added throughout.
 - This phase turns the cartridge vision's creative constraint thesis (profiles + retro authenticity) and its production extensibility thesis (native packaging + controlled richer FFI on top of a clean isolation seam) from offloaded FUTURE items into a single, coordinated, documented, and demonstrable body of work, while giving the "every new engine feature must be cartridge-usable" Ongoing principle a living home and enforcement mechanism.
 
 ## Outcome
@@ -344,8 +383,8 @@ List items that were surfaced but intentionally left out of this phase.
 
 **Files affected (initial map)**
 
-- New or primary engine: `engine/fidelity/` (or `engine/fidelity/profile.py` + manager), `engine/graphics/effects/` or post-process layer for visual retro, `engine/audio/chip_emulation.py` (or submodule), expansion inside `engine/retro/`
-- Modified: `engine/cartridge/manifest.py` + `schema.json` (light profile / native build section support if not already sufficient), `tools/cli/cartridge_pack.py` (native artifact discovery + bundling), loader / PluginHost (profile wiring + native pack consumption + ABI gating)
+- New or primary engine: `engine/fidelity/` (umbrella `FidelityProfile` composing the existing `engine/retro/profile.py` RetroProfile), `engine/graphics/effects/` (B1 overlay + B2 256×240 RTT pipeline + B3 shaders), `engine/audio/chip_voices.py` (procedural samples; replaces/backs the mock NSF channel API), expansion inside `engine/retro/` (FixedPoint overflow-wrap mode, momentum_residual revival)
+- Modified: `engine/cartridge/manifest.py` + `schema.json` (`fidelity` key), `tools/cli/cartridge_pack.py` (declared-artifact validation — inclusion already works), `pyproject.toml` (`[project.scripts]` → `py2d-cartridge`), loader / PluginHost (profile wiring + ABI gating)
 - Modified (light): RenderSystem or a thin compositing hook (for effects opt-in only), existing AudioSystem/MusicSystem/NSF integration points (additive)
 - New docs: `docs/guides/fidelity_profiles.md` (or combined with native guide updates); updates to `docs/guides/cartridge_loader_guide.md`, `docs/guides/native_plugins_guide.md` (if exists), audio guide, retro-related docs
 - Validation / examples: updates or a packaging smoke under `examples/hosts/` or a new `tools/packaging_example/`; optional profile-exercising additions or config to `examples/cartridges/tgl_demo/` (or a small dedicated ref cartridge under `examples/cartridges/`); the TGL packaging step exercised as part of P5-F validation

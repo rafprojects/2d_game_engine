@@ -128,6 +128,11 @@ small contract: e.g. `world.ensure_system(cls, factory)` (idempotent by
 type), or a "host provides" list on CartridgeContext that cartridges can
 query, plus removal support for cartridge-registered systems on unload.
 
+**Status (2026-06-10):** Absorbed into PHASE4 track P4-A (ownership-tracked
+teardown) during the PHASE4 viability evaluation. PHASE4 is now the
+authoritative tracking surface; this entry stays only as a pointer until
+P4-A lands.
+
 ### F. tgl_demo double Render/Input registration
 tgl_demo's initialize creates and registers its own RenderSystem and
 InputSystem (examples/cartridges/tgl_demo/python/tgl/entrypoint.py:143-144,
@@ -137,6 +142,10 @@ share component state (sprite.panda_node), but it is wasteful and fragile.
 Fix after task E lands (the demo should consume the host's systems like
 retro_sidescroller_demo does, or ensure_system should make the double
 registration a no-op).
+
+**Status (2026-06-10):** Task E was absorbed into PHASE4 P4-A; this fix is
+expected to fall out of P4-A's `ensure_system`/`remove_system` work. Kept
+here until that lands.
 
 ### G. `typesg` / `typeg` package naming cleanup
 Several subsystems keep their enums/typing in oddly named packages
