@@ -4,6 +4,7 @@ A running list of important follow-ups to tackle "at some point." Not sprint
 work — just things that shouldn't get lost. Started 2026-06-06 during M0 setup.
 
 ## Pre-publish / repo hygiene
+- [ ] **Keep ripped Guardian Legend assets private.** Before any public release, remove the paths listed in `docs/PRIVATE_ASSETS.md`, or keep this repo private.
 - [ ] **Fix placeholder metadata in `pyproject.toml`** — the `Homepage`,
   `Documentation`, `Repository`, and `Bug Tracker` URLs still say
   `yourusername`, and the author is `Your Name <your.email@example.com>`.
