@@ -1,5 +1,9 @@
 # 2D Game Engine
 
+**Archived 2026-10-13.** This was a personal Panda3D toolkit: a cartridge loader, one retro wall-clip demo, and a corridor shmup. Development has stopped. The shmup pattern rules and the glitch-layer rules are the useful part, and they live in the code under `engine/patterns/shmup.py` and `engine/retro/`. A separate local note, `shmup-and-glitch-layer-reference.md`, was written beside the projects tree and is not in this repo.
+
+Do not add features here.
+
 A versatile 2D game engine built with Python and Panda3D, using an Entity-Component-System (ECS) architecture. This engine aims to provide a flexible foundation for creating a variety of 2D games, such as top-down RPGs, vertical shooters, and side-scrolling action games.
 
 ## Sprite Animation System
