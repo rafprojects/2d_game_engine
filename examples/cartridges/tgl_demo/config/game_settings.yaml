@@ -59,22 +59,36 @@ enemies:
   collider_scale_factor: 0.80  # Fraction of the asteroid's computed visual size for its hitbox.
   collider_size: 0.18 # (legacy fallback; now overridden by scale * factor via the visual size helper)
   patterns:
+    # Names come from engine.patterns.shmup. Rates are aspect2d units per second.
+    # Difficulty multiplies descent and frequency. Amplitude and radius stay fixed.
     - name: straight
       weight: 4
-      speed_multiplier: 1.0
       point_value: 100
+      descent: 0.45
     - name: sinusoidal
       weight: 2
-      speed_multiplier: 0.8
       point_value: 150
-    - name: diagonal_left
+      amplitude: 0.25
+      frequency: 0.8
+      descent: 0.35
+    - name: circular
       weight: 1
-      speed_multiplier: 1.1
-      point_value: 120
-    - name: diagonal_right
+      point_value: 180
+      radius: 0.18
+      frequency: 0.5
+      descent: 0.25
+    - name: figure_eight
       weight: 1
-      speed_multiplier: 1.1
-      point_value: 120
+      point_value: 200
+      amplitude: 0.22
+      frequency: 0.6
+      descent: 0.30
+    - name: zigzag
+      weight: 1
+      point_value: 160
+      amplitude: 0.28
+      frequency: 2.5
+      descent: 0.40
 
 starfield:
   enabled: true

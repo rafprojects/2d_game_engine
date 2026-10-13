@@ -15,6 +15,7 @@ python main.py --cartridge examples/cartridges/tgl_demo
 - Default window: 1024×960 (2× the classic 512×480 "NES doubled" target used in the comments).
 - Controls: Arrow keys / WASD to move, Space to shoot.
 - The demo is intentionally minimal — a vertical lane with a player ship, basic enemy waves, score/lives, and invulnerability on hit.
+- Enemies roll five kinematic patterns from `engine/patterns/shmup.py`: straight, sinusoidal, circular, figure-eight, and zigzag.
 
 ## Cartridge Dev Loop & Reference Implementation (P1-G)
 
