@@ -99,6 +99,64 @@ The `ColliderComponent` layer/mask system uses a bitfield convention that is
 not currently documented. Add an explanation (and constants file) so cartridge
 authors can set up collision matrices without guessing bit offsets.
 
+### D. Rust engine math / core layer (extensive spike required)
+Consideration surfaced during P2-A (core retro math primitives). Evaluate
+re-implementing performance-sensitive or determinism-critical primitives
+(fixed-point arithmetic, possibly later systems) as a Rust layer (PyO3 etc.)
+for optional acceleration or as a future engine foundation.
+
+**Status:** Deferred. Requires an *extensive spike* (build system changes,
+cross-platform wheel/CI, contributor ergonomics, packaging impact on pure-Py
+cartridges, comparison vs the pure-Python reference, synergy with PHASE3
+native plugin boundary) before any commitment or partial implementation.
+The P2-A reference implementation (pure Python) remains the supported path
+for the retro emergent layer.
+
+See the approved P2-A session plan for the full pros/cons/LOE analysis of
+native paths (C++ Panda expansion was scrapped; Rust via added layer is the
+only path worth future investigation).
+
+### E. System-ownership contract / World.add_system dedup
+Surfaced during the P2 retro audit (2026-06). `World.add_system` blindly
+appends (engine/core/system.py:105): there is no dedup, ordering, priority,
+or namespacing, and no documented contract for which core systems the host
+(main.py) provides vs which a cartridge must register. main.py pre-registers
+ResourceManager/AssetStreaming/Render/Input/Movement before the cartridge
+loads; the retro_sidescroller_demo relies on them (correct), while tgl_demo
+registers its *own* RenderSystem + InputSystem on top (see task F). Design a
+small contract: e.g. `world.ensure_system(cls, factory)` (idempotent by
+type), or a "host provides" list on CartridgeContext that cartridges can
+query, plus removal support for cartridge-registered systems on unload.
+
+**Status (2026-06-10):** Absorbed into PHASE4 track P4-A (ownership-tracked
+teardown) during the PHASE4 viability evaluation. PHASE4 is now the
+authoritative tracking surface; this entry stays only as a pointer until
+P4-A lands.
+
+### F. tgl_demo double Render/Input registration
+tgl_demo's initialize creates and registers its own RenderSystem and
+InputSystem (examples/cartridges/tgl_demo/python/tgl/entrypoint.py:143-144,
+321, 328) even though main.py already registered both (main.py:98-105). Two
+RenderSystems and two InputSystems run every frame; it works because they
+share component state (sprite.panda_node), but it is wasteful and fragile.
+Fix after task E lands (the demo should consume the host's systems like
+retro_sidescroller_demo does, or ensure_system should make the double
+registration a no-op).
+
+**Status (2026-06-10):** Task E was absorbed into PHASE4 P4-A; this fix is
+expected to fall out of P4-A's `ensure_system`/`remove_system` work. Kept
+here until that lands.
+
+### G. `typesg` / `typeg` package naming cleanup
+Several subsystems keep their enums/typing in oddly named packages
+(`engine/physics/typesg/`, and similar `typesg`/`typeg` directories in other
+subsystems). Rename to something self-explanatory (e.g. `defs/`,
+`collider_types.py` at module level) in one sweep, with deprecation aliases
+for cartridge compatibility. Low value alone - batch with the next
+engine-wide refactor.
+
 ---
+
+
 
 *(Broader Fidelity Profiles / Retro Authenticity items and remaining Native Plugin Boundary & FFI Readiness items (packaging, richer FFI, security sketch) were formalized into PHASE5_FIDELITY_RETRO_PRODUCTION.md tracks during Phase 5 planning and removed here to keep the FUTURE queue clean. See PHASE5 for the authoritative tracking.)*

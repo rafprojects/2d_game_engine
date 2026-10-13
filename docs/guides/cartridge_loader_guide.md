@@ -145,3 +145,5 @@ After a successful load, the entry instance also receives a `.context` attribute
 - No high-level host/menu UI for cartridge switching yet (see PHASE4 for multi-cartridge host sketches).
 
 Use this doc as the reference while iterating on the loader; future updates will flesh out schema validation, save-state integration, and CLI packaging. See `PHASE1_CARTRIDGE_SYSTEM_POLISH.md` (tracks P1-B and P1-C) for the current lifecycle + context work.
+
+**See also:** [Building Authentic Retro Mechanics with Cartridges](retro_mechanics_guide.md). That guide covers how a cartridge opts into the `engine/retro/` layer (fixed-point, fixed ticks, emergent quirks) and walks through the `retro_sidescroller_demo` reference cartridge.

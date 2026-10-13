@@ -266,8 +266,6 @@ class RenderSystem(System):
         sorted_entities_data = self._get_sorted_renderable_entities()
         current_sprite_entity_ids = set()
 
-        print(f"🎨 RenderSystem: Processing {len(sorted_entities_data)} entities with sprites")
-
         for item_data in sorted_entities_data:
             entity = item_data['entity']
             transform = item_data['transform']

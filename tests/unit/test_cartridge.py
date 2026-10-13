@@ -687,3 +687,101 @@ def test_loader_passes_cartridge_context_and_supports_new_style_hook(tmp_path):
         assert loaded.manifest.name == "Test Cartridge"
     finally:
         _cleanup_modules()
+
+
+# ------------------------------------------------------------------
+# P2-D: Reference cartridge (SMB-spirit sidescroller for wall clip)
+# ------------------------------------------------------------------
+
+def test_retro_sidescroller_demo_loads_and_reproduces_wall_clip(tmp_path):
+    """P2-D end-to-end validation (re-worked, drives real frames headless).
+
+    One reference cartridge must be a 2D sidescroller in Super Mario Bros
+    spirit "to best show the wall clip". This test goes beyond load-time
+    wiring: it loads the real cartridge, then plays it frame-by-frame with
+    no window (DummyBase) and asserts the emergent behavior end-to-end:
+
+    - C-hotkey path (force_clip_alignment) + 40 frames -> the player CLIPS
+      through the 6px wall (x > 206) and a clip event was recorded.
+    - T-hotkey path (toggle_quirk -> modern ejection) + same approach ->
+      BLOCKED at exactly x = 194.0.
+    - X-hotkey path (force_block_alignment, quirk back on) -> blocked too:
+      the quirk is alignment-dependent, not a pass-through.
+
+    Also exercises the pack CLI on the real cart (P2-D AC).
+    """
+    from pathlib import Path
+
+    cart_dir = Path(__file__).parent.parent.parent / "examples/cartridges/retro_sidescroller_demo"
+    assert cart_dir.exists(), "P2-D SMB-spirit sidescroller reference cartridge must exist"
+
+    # Pack the real reference cart (AC + "added to examples" validation)
+    out_car = tmp_path / "retro_sidescroller_demo_p2d.car"
+    exit_code = cartridge_pack.main([str(cart_dir), "-o", str(out_car), "--force"])
+    assert exit_code == 0
+    assert out_car.exists()
+
+    # Real World: the cart registers systems and we drive world.update() for
+    # real frames. DummyBase is fine - the cart guards every base usage
+    # (accept / mouseWatcherNode / setBackgroundColor) with hasattr.
+    from engine.core.system import World as RealWorld
+
+    real_world = RealWorld()
+    loader = CartridgeLoader(
+        world=real_world,
+        base=DummyBase(),
+        resource_manager=DummyResourceManager(),
+        extract_root=tmp_path / "extract_retro_ss",
+    )
+
+    def play_frames(n: int):
+        for _ in range(n):
+            real_world.update(1.0 / 60.0)  # exactly one 60Hz retro tick each
+
+    try:
+        ctx = loader.load_directory(str(cart_dir))
+        entry = ctx.entry_instance
+
+        # Opt-in surface (P2-C) exercised by the cart.
+        assert entry.profile.frac_bits == 8
+        assert entry.profile.tick_hz == 60
+        assert "subpixel_wall_clip" in entry.profile.enable_quirks
+        assert hasattr(entry, "player_st") and hasattr(entry, "player_sm")
+        assert hasattr(entry, "retro_system"), "register_retro_systems handle kept"
+        assert entry.retro_system in real_world.systems
+
+        # 1) Quirk ON at the exact clip alignment: emerges through the wall.
+        clipped_events = []
+        entry.force_clip_alignment()
+        for _ in range(40):
+            real_world.update(1.0 / 60.0)
+            clipped_events.extend(entry.retro_system.clip_events)
+        x_clip = entry.player_st.get_position()[0]
+        assert x_clip > 206.0, f"expected clip past the wall, got x={x_clip}"
+        assert any(ev["obstacle"] == "clip_wall" for ev in clipped_events)
+
+        # 2) Same approach with the quirk toggled off (modern ejection): blocked.
+        entry.toggle_quirk()
+        entry.force_clip_alignment()
+        play_frames(40)
+        x_modern = entry.player_st.get_position()[0]
+        assert x_modern == 194.0, f"modern ejection must block at 194.0, got {x_modern}"
+
+        # 3) Quirk back on but the blocked alignment (3px away): still blocked.
+        entry.toggle_quirk()
+        entry.force_block_alignment()
+        play_frames(40)
+        x_blocked = entry.player_st.get_position()[0]
+        assert x_blocked == 194.0, f"alignment B must block even with quirk on, got {x_blocked}"
+    finally:
+        _cleanup_modules()
+        # Best-effort cleanup of any python_path the loader may have inserted
+        # (use the module 'sys', not a loop variable)
+        import sys as _sys
+        for p in list(_sys.path):
+            ps = str(p).lower()
+            if "retro_sidescroller" in ps or str(tmp_path) in str(p):
+                try:
+                    _sys.path.remove(p)
+                except ValueError:
+                    pass

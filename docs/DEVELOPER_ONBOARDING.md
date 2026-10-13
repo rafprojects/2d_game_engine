@@ -47,7 +47,8 @@ python /path/to/2d_game_engine/main.py --cartridge .   # run from the engine sou
 2. **Run** a cartridge: `python main.py --cartridge examples/cartridges/tgl_demo`
 3. **Create** one: `py2d-cartridge init "My First Cartridge"`
 4. **Follow** `docs/guides/cartridge_loader_guide.md` and the tgl_demo README
-5. **(Legacy)** Build with `py2d-engine new-game` only if you need the old embedded layout
+5. **Go retro** with `docs/guides/retro_mechanics_guide.md` + the retro_sidescroller_demo cartridge (emergent NES-style mechanics)
+6. **(Legacy)** Build with `py2d-engine new-game` only if you need the old embedded layout
 
 ### **Intermediate (Ready to contribute)**
 1. **Study** the ECS architecture in `engine/core/`

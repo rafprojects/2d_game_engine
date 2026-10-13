@@ -1,0 +1,19 @@
+{
+  "cartridge": {
+    "name": "retro_sidescroller_demo",
+    "version": "0.1.0",
+    "entrypoint": "retro_sidescroller.entrypoint:RetroSidescrollerDemo",
+    "requires": {
+      "engine": "^0.1.0"
+    }
+  },
+  "assets": {
+    "mount": "assets",
+    "virtual_root": "retro_sidescroller"
+  },
+  "python_path": "python",
+  "metadata": {
+    "title": "Retro Sidescroller Demo (SMB Spirit - Wall Clip)",
+    "description": "Playable SMB-spirit sidescroller reference cartridge (P2-D). A 256x240 virtual-pixel level on the fixed-tick retro layer (8.8 fixed point, 60 Hz) where the subpixel wall clip genuinely emerges from midline ejection: run at the thin wall at full speed and the right subpixel alignment ejects you out the far side. C/X reproduce the exact clipping/blocked alignments; T toggles modern vs retro ejection."
+  }
+}

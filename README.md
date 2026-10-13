@@ -107,26 +107,16 @@ The engine includes an **Event System** (`EventManager` and `Event` base class) 
    # cd <repository-directory>
    ```
 
-2. **Set up a virtual environment (recommended):**
+2. **Set up the environment:**
 
    ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\\Scripts\\activate
+   uv venv --python 3.14 .venv
+   uv pip install --python .venv -e ".[dev]"
    ```
 
-3. **Install dependencies:**
+   The environment directory is `.venv`. `uv venv` does not install `pip` inside it. Use `uv pip install --python .venv ...` rather than `./.venv/bin/pip`.
 
-   The primary dependency is Panda3D. Ensure it\'s installed in your Python environment. You can typically install it via pip:
-
-   ```bash
-   pip install panda3d
-   ```
-
-   If a `requirements.txt` file is provided with specific versions or other dependencies:
-
-   ```bash
-   pip install -r requirements.txt
-   ```
+3. **Dependencies** are declared in `pyproject.toml` (panda3d, jsonschema, msgpack, watchdog, PyYAML). `requirements.txt` lists the same runtime set.
 
 ### Cartridge Quick Start (Recommended)
 
