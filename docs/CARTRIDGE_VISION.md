@@ -58,7 +58,7 @@ The vision is already **substantially realized**:
 ## Quick Navigation
 - Detailed audit + full gap table + verification criteria: [CARTRIDGE_ARCHITECTURE_VISION_AND_AUDIT.md](CARTRIDGE_ARCHITECTURE_VISION_AND_AUDIT.md)
 - Phase tracking (starting here): `PHASE1_CARTRIDGE_SYSTEM_POLISH.md`
-- Guides: `docs/guides/cartridge_loader_guide.md`, `cartridge_config_options.md`, `save_state_options.md`, `collision_layers_and_bounds.md`
+- Guides: `docs/guides/cartridge_loader_guide.md`, `cartridge_config_options.md`, `save_state_options.md`, `collision_layers_and_bounds.md`, `docs/guides/retro_mechanics_guide.md` (the Phase 2 emergent retro layer + reference cartridge walkthrough)
 - Example cartridge: `examples/cartridges/tgl_demo/` (run with `python main.py --cartridge examples/cartridges/tgl_demo`)
 - Packaging: `py2d-cartridge .` (or `python -m tools.cli.cartridge_pack`)
 - Core code: `engine/cartridge/`, `engine/save_state/manager.py`, `engine/assets/resource_manager.py`, `main.py` (_load_cartridge)

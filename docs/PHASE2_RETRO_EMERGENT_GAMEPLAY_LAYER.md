@@ -1,8 +1,8 @@
 # Phase 2 - Retro Emergent Gameplay Layer
 
-**Status:** In Progress  
+**Status:** Complete  
 **Created:** 2026-06  
-**Last updated:** 2026-06-10 (P2-B and P2-D confirmed complete by user after interactive verification)
+**Last updated:** 2026-10-13 (P2-E guide landed and the phase closed. P2-B and P2-D were confirmed complete on 2026-06-10 after interactive verification.)
 
 ### Tracks
 
@@ -12,7 +12,7 @@
 | P2-B | Reference quirk movement and collision systems (e.g. `NESStyleMovementSystem` or `QuirkMovementSystem` + collision resolver that intentionally applies and documents specific clipping/penetration/quirk rules) | Complete ✅ | Large |
 | P2-C | Opt-in / integration mechanism for the retro layer (fidelity profile hook, component/system flags, clean coexistence with default float/Vec2 paths so modern cartridges are unaffected) | Complete ✅ | Small-Medium |
 | P2-D | One or two small reference cartridges demonstrating a reproducible emergent mechanic (e.g. subpixel-enabled wall clip, momentum quirk, or documented classic glitch that only appears when the layer is active) | Complete ✅ | Medium |
-| P2-E | Documentation and tutorial ("Building Authentic Retro Mechanics with Cartridges" or equivalent; includes how cartridge authors opt in and why the emergent behavior occurs) | Planned | Small |
+| P2-E | Documentation and tutorial ("Building Authentic Retro Mechanics with Cartridges" or equivalent; includes how cartridge authors opt in and why the emergent behavior occurs) | Complete ✅ | Small |
 
 ---
 
@@ -412,6 +412,41 @@ The vision explicitly calls for "Documentation and tutorial: 'Building Authentic
 - A reviewer (or the author) can follow the tutorial end-to-end in < 30 minutes and observe the expected emergent result.
 - The guide is listed in `docs/guides/README.md` or the main navigation.
 
+### Delivery note (2026-10-13)
+
+Shipped as `docs/guides/retro_mechanics_guide.md` ("Building Authentic Retro
+Mechanics with Cartridges"). Contents against the acceptance criteria:
+
+- **Research-backed "why"**: a sourced field guide to the real mechanisms.
+  SMB's position-based wall ejection and subpixels (TASVideos/SDA), the Minus
+  World as a clip exposing stale warp data, the Pac-Man 256 and Donkey Kong
+  level-22 integer-overflow kill screens, MissingNo. as an out-of-bounds read,
+  SMW credits-warp ACE as the far end of the continuum, and the speedrunning
+  culture that forms around deterministic quirks. Claims link to sources in
+  the guide's final section.
+- **Exact rule and predictability**: the midline-ejection code excerpt, the
+  worked 8.8 arithmetic table (clip, block, and one-subpixel rows), the
+  "clippable iff per-tick speed > half thickness" theorem, and the
+  `P(clip) = (stride - half) / stride` formula (demo: 25%).
+- **Demo design case study**: how retro_sidescroller_demo was envisioned
+  (observable, reproducible, attributable), the rebuild lesson ("if the
+  quirk is an `if`, it isn't emergent"), the numbers table showing every
+  constant's reason, and the instruments (C, X, T, plus clip narration).
+- **Tutorial A** (opt in, about 10 minutes): profile, register, components,
+  tick callback, render sync, and clip_events. The snippets use the same
+  calls as the demo. The demo's `initialize` is the full copy.
+- **Tutorial B** (modify and predict): four experiments whose results follow
+  from the rule. A thicker wall kills the clip. A faster run raises the
+  natural odds and blocks the C alignment, because alignment is per-stride.
+  The one-subpixel flip, done interactively. A cartridge-named quirk
+  (`momentum_preserving_clip`) showing the extension pattern through
+  QuirkRegistry, with a pinning-test template.
+- **Cross-links**: guides README (listed first), loader guide "See also",
+  CARTRIDGE_VISION Quick Navigation, DEVELOPER_ONBOARDING learning path
+  step 5, and the demo README's Notes.
+
+Accepted 2026-10-13. Track complete.
+
 ## Follow-On Candidates
 
 List items that were surfaced but intentionally left out of this phase.
@@ -436,11 +471,11 @@ List items that were surfaced but intentionally left out of this phase.
 
 ## Outcome
 
-*(To be filled when the phase is complete.)*
+Closed 2026-10-13.
 
-- What shipped.
-- What was deferred (moved to Follow-On or FUTURE_TASKS.md items).
-- What should happen next (e.g. Phase 3 native boundary, deeper integration with existing cartridges, expanded quirk catalog).
+- **What shipped.** `engine/retro/` provides fixed-point math, fixed-tick movement, and midline-ejection wall clips behind the `subpixel_wall_clip` quirk. `RetroProfile` and `register_retro_systems` are the opt-in, and cartridges that never call them stay on the modern float path. `examples/cartridges/retro_sidescroller_demo` shows the clip under player control (C, X, and T). `docs/guides/retro_mechanics_guide.md` explains the rule, the demo's numbers, and how to add a quirk.
+- **What was deferred.** CRT and palette effects, audio-chip emulation, labyrinth-mode use of the layer, bit-accurate emulation, further quirk examples, and a subpixel inspector. Those stay in the Follow-On Candidates table and in `docs/FUTURE_TASKS.md`.
+- **What should happen next.** Phase 3 is the native plugin boundary. The shmup movement patterns are a separate branch and should merge after this one.
 
 ---
 

@@ -5,6 +5,7 @@
 ## 📋 **Available Guides**
 
 ### **Feature Guides**
+- [`retro_mechanics_guide.md`](retro_mechanics_guide.md) - **Building Authentic Retro Mechanics with Cartridges**: the retro layer, real 8-bit glitch history, how the subpixel wall clip emerges, and tutorials for opting in and writing your own quirks
 - [`sprite_animation_guide.md`](sprite_animation_guide.md) - Complete sprite animation system
 - [`movement_tweening_guide.md`](movement_tweening_guide.md) - Movement tweening effects
 

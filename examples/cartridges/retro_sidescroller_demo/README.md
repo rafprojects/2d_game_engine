@@ -94,6 +94,10 @@ starting point for your own retro cartridge.
 
 ## Notes
 
+- **The full story lives in the guide**: [Building Authentic Retro Mechanics
+  with Cartridges](../../../docs/guides/retro_mechanics_guide.md). It covers the
+  8-bit history behind the mechanic, how this cartridge was designed, and
+  tutorials for modifying the quirk or writing your own.
 - The cartridge relies on `main.py`'s core systems (Render/Input); it only
   adds its own controller and the retro system.
 - Headless end-to-end coverage lives in
