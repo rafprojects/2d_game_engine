@@ -15,3 +15,5 @@ assets/music
 assets/soundfonts
 assets/sprites
 .copilot_guidelines.md
+# Project-local uv environment (uv migration 2026-09-17)
+.venv/

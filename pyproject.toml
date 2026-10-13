@@ -28,6 +28,14 @@ dependencies = [
     "panda3d>=1.10.14,<1.11",  # pinned to the tested 1.10 line; see PROJECT.md upgrade policy
     "jsonschema>=4.0.0",
     "msgpack>=1.0.0",
+    # Present in requirements.txt but was missing here, so editable/pyproject
+    # installs omitted it while engine/dev_tools/hot_reload.py imports it
+    # unguarded (from watchdog.observers import Observer).
+    "watchdog>=3.0.0",
+    # Required by the reference cartridge at
+    # examples/cartridges/tgl_demo/python/tgl/entrypoint.py, which
+    # tests/unit/test_cartridge.py loads. Was undeclared.
+    "PyYAML>=6.0",
 ]
 requires-python = ">=3.9"
 
