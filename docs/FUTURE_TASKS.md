@@ -58,9 +58,9 @@ Reference config lists four power-up types: `health`, `shield`, `weapon_upgrade`
 
 ### 7. Additional enemy types
 Only asteroids exist as assets. At minimum, extract and integrate enemies from
-the original spritesheet. The reference movement system supports 15+ patterns
-(`sinusoidal`, `circular`, `figure_eight`, `spiral`, `pendulum`, `arc`,
-`evading`, etc.) that are ready to plug in once sprite assets exist.
+the original spritesheet. Corridor motion for those enemies can use the shmup
+pattern registry in `engine/patterns/shmup.py` (straight, sinusoidal, circular,
+figure-eight, zigzag, and ten others). `tgl_demo` already spawns the first five.
 
 ### 8. Audio
 The reference `config/game_settings.yaml` defines BGM tracks and SFX volumes.

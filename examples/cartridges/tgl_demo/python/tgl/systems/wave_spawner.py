@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import os
 import random
 
@@ -9,6 +8,8 @@ from panda3d.core import Vec2
 from engine.core.system import System
 from engine.graphics.components.transform_component import TransformComponent
 from engine.graphics.components.sprite_component import SpriteComponent
+from engine.patterns.shmup import create as create_pattern
+from engine.patterns.shmup import scaled_params, step as step_pattern
 from engine.physics.components.collider_component import ColliderComponent
 from engine.physics.typesg import ColliderType
 from engine.physics.typesg import CollisionLayer, mask_of
@@ -59,6 +60,7 @@ class WaveSpawnerSystem(System):
             return
 
         self._elapsed += dt
+        player_xy = self._player_xy()
 
         # Move existing enemies
         enemies = list(self.world.get_entities_with_components(EnemyComponent, TransformComponent))
@@ -66,24 +68,13 @@ class WaveSpawnerSystem(System):
         for entity in enemies:
             enemy_comp = self.world.get_component(entity.id, EnemyComponent)
             transform = self.world.get_component(entity.id, TransformComponent)
-            if not enemy_comp or not transform:
+            if not enemy_comp or not transform or enemy_comp.pattern_state is None:
                 continue
 
-            enemy_comp.pattern_time += dt
-            t = enemy_comp.pattern_time
-
-            dy = -enemy_comp.speed * dt
-            dx = 0.0
-
-            if enemy_comp.pattern == "sinusoidal":
-                dx = math.cos(t * 3.0) * enemy_comp.speed * 0.5 * dt
-            elif enemy_comp.pattern == "diagonal_left":
-                dx = -enemy_comp.speed * 0.4 * dt
-            elif enemy_comp.pattern == "diagonal_right":
-                dx = enemy_comp.speed * 0.4 * dt
-
-            transform.x += dx
-            transform.y += dy
+            step_pattern(enemy_comp.pattern_state, dt, player_xy)
+            transform.x = enemy_comp.pattern_state.x
+            transform.y = enemy_comp.pattern_state.y
+            enemy_comp.pattern_time = enemy_comp.pattern_state.elapsed
 
             if transform.y < self._despawn_y:
                 to_remove.append(entity.id)
@@ -111,17 +102,25 @@ class WaveSpawnerSystem(System):
         pattern_name = random.choices(pattern_names, weights=weights, k=1)[0]
         pattern = next(p for p in self._patterns if p["name"] == pattern_name)
 
-        # Difficulty-scaled speed
-        speed_base = random.uniform(0.3, 0.55)
-        speed = speed_base * pattern["speed_multiplier"] * (1 + step * self._speed_delta)
+        # Difficulty multiplies descent and other rates. Distances stay as authored.
+        scale = 1.0 + step * self._speed_delta
+        raw = {
+            key: value
+            for key, value in pattern.items()
+            if key not in ("name", "weight", "point_value")
+        }
+        params = scaled_params(raw, scale)
+        pattern_state = create_pattern(pattern_name, x, self._spawn_y, **params)
+        descent = float(params.get("descent", 0.0))
 
         enemy = self.world.create_entity("enemy")
         self.world.add_component(enemy.id, TransformComponent(x=x, y=self._spawn_y, scale_x=self._enemy_scale, scale_y=self._enemy_scale))
         self.world.add_component(enemy.id, SpriteComponent(image_path=_asteroid_sprite_path(), layer=1))
         self.world.add_component(enemy.id, EnemyComponent(
-            point_value=pattern["point_value"],
-            speed=speed,
-            pattern=pattern_name
+            point_value=pattern.get("point_value", 100),
+            speed=descent,
+            pattern=pattern_name,
+            pattern_state=pattern_state,
         ))
 
         # Support either a scalar (legacy square) or [w, h] / (w, h) for a properly proportioned rect.
@@ -139,3 +138,10 @@ class WaveSpawnerSystem(System):
             collision_layer=LAYER_ENEMY,
             collision_mask=ENEMY_COLLISION_MASK,
         ))
+
+    def _player_xy(self) -> tuple[float, float] | None:
+        for entity in self.world.get_entities_with_components(PlayerComponent, TransformComponent):
+            transform = self.world.get_component(entity.id, TransformComponent)
+            if transform is not None:
+                return (transform.x, transform.y)
+        return None
